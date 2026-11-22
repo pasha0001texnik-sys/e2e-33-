@@ -1,5 +1,5 @@
-import type { Fixture, Run, Stand } from "@e2e/shared";
-import { syntheticUser, type PasswordPolicy } from "@e2e/shared/node";
+import type { Fixture, FixtureTemplate, Gender, Run, Stand } from "@e2e/shared";
+import { generatePerson, type PasswordPolicy } from "@e2e/shared/node";
 import { must, type Db } from "./db.ts";
 import type { RunLogger } from "./logger.ts";
 
@@ -9,6 +9,9 @@ export interface UserFixture {
   password: string;
   first_name: string;
   last_name: string;
+  gender?: Gender;
+  birth_date?: string;
+  login?: string;
   locale: string;
 }
 
@@ -24,6 +27,8 @@ export class FixtureService {
     private log: RunLogger,
     /** id фикстур, взятых из реестра (не созданных этим тестом) — общий для всех попыток */
     private claimed: string[] = [],
+    /** Шаблон генерации тестовых данных прогона */
+    private template?: FixtureTemplate,
   ) {}
 
   private ttl(): string {
@@ -31,17 +36,17 @@ export class FixtureService {
   }
 
   /** Новый синтетический пользователь. В реестр попадает до того, как появится на стенде. */
-  async createUser(opts: { locale?: string; passwordPolicy?: PasswordPolicy } = {}): Promise<UserFixture> {
+  async createUser(opts: { locale?: never; passwordPolicy?: PasswordPolicy } = {}): Promise<UserFixture> {
     if (!this.stand.mail_domain) throw new Error(`У стенда ${this.stand.slug} не задан mail_domain`);
     const policy = opts.passwordPolicy ?? (this.stand.test_flags as { password_policy?: PasswordPolicy }).password_policy;
-    const u = syntheticUser({
+    const p = generatePerson({
       runId: this.run.id,
       n: ++this.n,
       mailDomain: this.stand.mail_domain,
-      locale: opts.locale,
+      template: this.template,
       passwordPolicy: policy,
     });
-    this.log.addSecret(u.password);
+    this.log.addSecret(p.password);
     const row = must(
       await this.db
         .from("fixtures")
@@ -51,8 +56,17 @@ export class FixtureService {
           run_test_id: this.testId,
           build_tag: this.run.build_tag,
           kind: "user",
-          payload: { email: u.email, first_name: u.first_name, last_name: u.last_name, locale: u.locale },
-          secret_payload: { password: u.password },
+          // открытые поля — в payload; пароль — в защищённый secret_payload
+          payload: {
+            email: p.email,
+            first_name: p.first_name,
+            last_name: p.last_name,
+            gender: p.gender,
+            birth_date: p.birth_date,
+            login: p.login,
+            locale: p.locale,
+          },
+          secret_payload: { password: p.password },
           status: "in_use",
           locked_by: this.testId,
           expires_at: this.ttl(),
@@ -61,8 +75,18 @@ export class FixtureService {
         .single(),
       "fixture insert",
     ) as { id: string };
-    this.log.for(this.testId).info(`Фикстура создана: ${u.email}`, { fixture_id: row.id });
-    return { id: row.id, ...u };
+    this.log.for(this.testId).info(`Фикстура создана: ${p.email}`, { fixture_id: row.id });
+    return {
+      id: row.id,
+      email: p.email,
+      password: p.password,
+      first_name: p.first_name,
+      last_name: p.last_name,
+      gender: p.gender,
+      birth_date: p.birth_date,
+      login: p.login,
+      locale: p.locale,
+    };
   }
 
   async markVerified(id: string) {
@@ -97,7 +121,10 @@ export class FixtureService {
       password: secret.secret_payload.password,
       first_name: String(fx.payload.first_name ?? ""),
       last_name: String(fx.payload.last_name ?? ""),
-      locale: String(fx.payload.locale ?? "ru"),
+      gender: fx.payload.gender as Gender | undefined,
+      birth_date: fx.payload.birth_date as string | undefined,
+      login: fx.payload.login as string | undefined,
+      locale: String(fx.payload.locale ?? "ru-RU"),
     };
   }
 

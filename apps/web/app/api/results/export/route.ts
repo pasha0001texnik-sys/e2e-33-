@@ -4,12 +4,14 @@ import { requireUser, roleAtLeast } from "@/lib/auth";
 import { createServiceClient } from "@/lib/supabase/server";
 
 // Экспорт выбранных результатов сценариев в JSON или CSV.
-// storage_dump (cookies/localStorage) включается только по явному запросу админа (dump=1).
+// Открытые поля (имя, фамилия, дата рождения, пол, логин) — всегда; пароль и
+// дамп cookies/storage раскрываются только по явному запросу админа (secrets=1).
 export async function GET(request: NextRequest) {
   const { supabase, profile } = await requireUser();
   const url = request.nextUrl;
   const format = url.searchParams.get("format") === "csv" ? "csv" : "json";
-  const wantDump = url.searchParams.get("dump") === "1";
+  // secrets=1 — новый флаг; dump=1 — совместимость со старой ссылкой
+  const wantSecrets = url.searchParams.get("secrets") === "1" || url.searchParams.get("dump") === "1";
   const ids = (url.searchParams.get("ids") ?? "")
     .split(",")
     .map((s) => s.trim())
@@ -23,30 +25,44 @@ export async function GET(request: NextRequest) {
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   const rows = (data ?? []) as Record<string, unknown>[];
 
-  // Дамп — отдельным защищённым запросом и только для админа
-  const includeDump = wantDump && roleAtLeast(profile.role, "admin");
-  if (includeDump) {
+  // Секреты — отдельными защищёнными запросами и только для админа
+  const reveal = wantSecrets && roleAtLeast(profile.role, "admin");
+  if (reveal) {
     const svc = createServiceClient();
-    const { data: dumps } = await svc.from("run_results").select("id, storage_dump").in("id", ids);
-    const byId = new Map((dumps ?? []).map((d: { id: string; storage_dump: unknown }) => [d.id, d.storage_dump]));
-    for (const r of rows) r.storage_dump = byId.get(r.id as string) ?? {};
+    const testIds = rows.map((r) => r.run_test_id as string);
+    const [{ data: dumps }, { data: fixtures }] = await Promise.all([
+      svc.from("run_results").select("id, storage_dump").in("id", ids),
+      svc.from("fixtures").select("run_test_id, secret_payload").in("run_test_id", testIds),
+    ]);
+    const dumpById = new Map((dumps ?? []).map((d: { id: string; storage_dump: unknown }) => [d.id, d.storage_dump]));
+    const secretByTest = new Map(
+      (fixtures ?? []).map((f: { run_test_id: string; secret_payload: Record<string, unknown> }) => [f.run_test_id, f.secret_payload]),
+    );
+    for (const r of rows) {
+      r.storage_dump = dumpById.get(r.id as string) ?? {};
+      const pwd = secretByTest.get(r.run_test_id as string)?.password;
+      if (pwd && r.form_fields && typeof r.form_fields === "object") {
+        (r.form_fields as Record<string, unknown>).password = pwd; // реальный пароль вместо маски
+      }
+    }
   }
 
   const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
   const name = `run-results-${stamp}`;
+  // Когда секреты раскрыты — не маскируем повторно; иначе маскируем защитно
+  const out = reveal ? rows : (maskSecrets(rows) as Record<string, unknown>[]);
 
   if (format === "json") {
-    const body = maskSecrets({ results: rows, count: rows.length, with_storage_dump: includeDump, exported_at: new Date().toISOString() });
+    const body = { results: out, count: out.length, with_secrets: reveal, exported_at: new Date().toISOString() };
     return new NextResponse(JSON.stringify(body, null, 2), {
       headers: { "content-type": "application/json; charset=utf-8", "content-disposition": `attachment; filename="${name}.json"` },
     });
   }
 
-  const masked = maskSecrets(rows) as Record<string, unknown>[];
   const header = ["id", "run_number", "build_tag", "stand", "scenario_key", "status", "region", "network_profile", "form_fields", "error", "created_at"];
-  if (includeDump) header.push("storage_dump");
+  if (reveal) header.push("storage_dump");
   const lines: (string | number | null)[][] = [header];
-  for (const r of masked) {
+  for (const r of out) {
     const run = r.run as { number?: number; build_tag?: string; stand?: { slug?: string } } | null;
     const row: (string | number | null)[] = [
       r.id as string,
@@ -61,7 +77,7 @@ export async function GET(request: NextRequest) {
       (r.error as string) ?? "",
       r.created_at as string,
     ];
-    if (includeDump) row.push(JSON.stringify(r.storage_dump ?? {}));
+    if (reveal) row.push(JSON.stringify(r.storage_dump ?? {}));
     lines.push(row);
   }
   const csv = "﻿" + lines.map((l) => l.map(csvCell).join(",")).join("\r\n");

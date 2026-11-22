@@ -20,9 +20,23 @@ function profileLabel(p: NetworkProfile): string {
   return parts.join(" · ") || "обычный";
 }
 
+function Person({ f }: { f: Record<string, unknown> }) {
+  const s = (k: string) => (f?.[k] == null ? "" : String(f[k]));
+  const name = [s("first_name"), s("last_name")].filter(Boolean).join(" ");
+  if (!name && !s("login")) return <span className="text-ink-3">—</span>;
+  return (
+    <div className="leading-tight">
+      <div>{name || "—"}</div>
+      <div className="font-mono text-xs text-ink-3">
+        {[s("login"), s("gender"), s("birth_date"), s("locale")].filter(Boolean).join(" · ")}
+      </div>
+    </div>
+  );
+}
+
 export function ResultsTable({ rows, isAdmin }: { rows: ResultRow[]; isAdmin: boolean }) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [withDump, setWithDump] = useState(false);
+  const [withSecrets, setWithSecrets] = useState(false);
   const allIds = useMemo(() => rows.map((r) => r.id), [rows]);
 
   const toggle = (id: string) =>
@@ -36,7 +50,7 @@ export function ResultsTable({ rows, isAdmin }: { rows: ResultRow[]; isAdmin: bo
   const exportUrl = (format: "json" | "csv") => {
     const ids = selected.size ? [...selected] : allIds;
     const qs = new URLSearchParams({ format, ids: ids.join(",") });
-    if (withDump) qs.set("dump", "1");
+    if (withSecrets) qs.set("secrets", "1");
     return `/api/results/export?${qs.toString()}`;
   };
 
@@ -62,9 +76,9 @@ export function ResultsTable({ rows, isAdmin }: { rows: ResultRow[]; isAdmin: bo
           </Button>
         )}
         {isAdmin && (
-          <label className="ml-auto flex items-center gap-1.5 text-xs text-ink-3" title="Дамп cookies/localStorage содержит session-секреты тестовых аккаунтов">
-            <input type="checkbox" checked={withDump} onChange={(e) => setWithDump(e.target.checked)} />
-            включить дамп cookies/storage
+          <label className="ml-auto flex items-center gap-1.5 text-xs text-ink-3" title="Пароль и дамп cookies/localStorage тестовых аккаунтов попадут в экспорт в открытом виде">
+            <input type="checkbox" checked={withSecrets} onChange={(e) => setWithSecrets(e.target.checked)} />
+            включить секреты (пароль, cookies/storage)
           </label>
         )}
       </div>
@@ -81,6 +95,7 @@ export function ResultsTable({ rows, isAdmin }: { rows: ResultRow[]; isAdmin: bo
               </th>
               <th>Статус</th>
               <th>Сценарий</th>
+              <th>Личность</th>
               <th>Прогон</th>
               <th>Стенд</th>
               <th>Сетевой профиль</th>
@@ -100,6 +115,9 @@ export function ResultsTable({ rows, isAdmin }: { rows: ResultRow[]; isAdmin: bo
                 </td>
                 <td>
                   <Mono>{r.scenario_key}</Mono>
+                </td>
+                <td>
+                  <Person f={r.form_fields} />
                 </td>
                 <td>
                   {r.run_id ? (

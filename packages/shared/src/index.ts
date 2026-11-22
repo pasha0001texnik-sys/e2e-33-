@@ -5,3 +5,4 @@ export * from "./errors.ts";
 export * from "./summary.ts";
 export * from "./scenarios.ts";
 export * from "./trace.ts";
+export * from "./templates.ts";

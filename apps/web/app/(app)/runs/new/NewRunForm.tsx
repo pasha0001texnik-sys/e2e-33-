@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { SCENARIO_CATALOG } from "@e2e/shared";
+import { FIXTURE_TEMPLATES, getTemplate, LOCALE_LABEL, SCENARIO_CATALOG } from "@e2e/shared";
 import { ActionForm, SubmitButton } from "@/components/forms";
 import { Card, Field } from "@/components/ui";
 import { createRun } from "../actions";
@@ -37,6 +37,7 @@ export function NewRunForm({
   const [standId, setStandId] = useState(defaults.stand ?? stands[0]?.id ?? "");
   const suite = suites.find((s) => s.id === suiteId);
   const stand = stands.find((s) => s.id === standId);
+  const [template, setTemplate] = useState(FIXTURE_TEMPLATES[0]!.key);
   const names = useMemo(() => new Map(SCENARIO_CATALOG.map((s) => [s.key, s.name])), []);
   const deps = useMemo(() => new Map(SCENARIO_CATALOG.map((s) => [s.key, s.dependsOn])), []);
 
@@ -102,6 +103,18 @@ export function NewRunForm({
       <div className="space-y-6">
         <Card title="Параметры">
           <div className="space-y-4" key={`${suiteId}-${standId}`}>
+            <Field
+              label="Шаблон тестовых данных"
+              hint={`Локаль ${LOCALE_LABEL[getTemplate(template).locale]} · возраст ${getTemplate(template).min_age}–${getTemplate(template).max_age} · пароль от ${getTemplate(template).password_policy.minLength ?? 14} симв.`}
+            >
+              <select name="fixture_template" className="input" value={template} onChange={(e) => setTemplate(e.target.value)}>
+                {FIXTURE_TEMPLATES.map((t) => (
+                  <option key={t.key} value={t.key}>
+                    {t.label}
+                  </option>
+                ))}
+              </select>
+            </Field>
             <Field label="Параллельные потоки">
               <input
                 name="parallelism"

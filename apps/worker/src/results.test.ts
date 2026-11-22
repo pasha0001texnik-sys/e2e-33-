@@ -10,7 +10,7 @@ test("recordResult: собирает поля формы из фикстур, м
       select: () => ({
         eq: async () => {
           assert.equal(t, "fixtures");
-          return { data: [{ payload: { email: "e2e@mail.test", first_name: "Анна", password: "SuperSecret1!", token: "abcdef" } }] };
+          return { data: [{ payload: { email: "e2e@mail.test", first_name: "Анна", last_name: "Тестова", gender: "female", birth_date: "1990-05-01", login: "anna.testova123" }, secret_payload: { password: "SuperSecret1!", token: "abcdef" } }] };
         },
       }),
     }),
@@ -31,10 +31,15 @@ test("recordResult: собирает поля формы из фикстур, м
   assert.equal(a.p_region, "eu-central");
   assert.equal((a.p_network_profile as { latency: number }).latency, 40);
   const ff = a.p_form_fields as Record<string, string>;
-  assert.equal(ff.email, "e2e@mail.test", "публичные поля сохраняются");
+  assert.equal(ff.email, "e2e@mail.test", "email читается открыто");
+  assert.equal(ff.first_name, "Анна", "имя открыто");
+  assert.equal(ff.last_name, "Тестова", "фамилия открыто");
+  assert.equal(ff.gender, "female", "пол открыто");
+  assert.equal(ff.birth_date, "1990-05-01", "дата рождения открыто");
+  assert.equal(ff.login, "anna.testova123", "логин открыто");
   assert.notEqual(ff.password, "SuperSecret1!", "пароль замаскирован");
-  assert.match(ff.password, /\*\*\*\*/);
-  assert.match(ff.token, /\*\*\*\*/);
+  assert.match(String(ff.password), /\*\*\*\*/);
+  assert.match(String(ff.token), /\*\*\*\*/);
   assert.ok((a.p_storage_dump as { cookies: unknown[] }).cookies, "дамп передаётся в защищённую колонку");
 });
 

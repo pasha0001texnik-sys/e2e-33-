@@ -1,3 +1,5 @@
+import type { BrowserProfile } from "./templates.ts";
+
 // Типы строк БД (повторяют supabase/migrations). Держите в синхроне со схемой
 // или сгенерируйте: `supabase gen types typescript --linked`.
 
@@ -113,6 +115,8 @@ export interface Run {
   max_retries: number;
   only_scenarios: string[] | null;
   hold_on_failure: boolean;
+  /** Ключ шаблона генерации тестовых данных (@e2e/shared FIXTURE_TEMPLATES) */
+  fixture_template: string | null;
   idempotency_key: string | null;
   parent_run_id: string | null;
   schedule_id: string | null;
@@ -232,6 +236,8 @@ export interface NetworkProfile {
   latency?: number | null;
   offline?: boolean;
   user_agent?: string;
+  /** Применённый браузерный профиль (locale, timezone, UA, viewport) */
+  browser?: BrowserProfile;
   [key: string]: unknown;
 }
 

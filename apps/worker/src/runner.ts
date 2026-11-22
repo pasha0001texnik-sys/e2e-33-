@@ -7,7 +7,10 @@ import {
   summarize,
   traceHeaders,
   withDependencies,
+  getTemplate,
+  type BrowserProfile,
   type ErrorKind,
+  type FixtureTemplate,
   type HoldAction,
   type Run,
   type RunTest,
@@ -19,6 +22,7 @@ import { chromium, type Browser } from "@playwright/test";
 import { Artifacts } from "./artifacts.ts";
 import type { Config } from "./config.ts";
 import { must, type Db } from "./db.ts";
+import { browserProfile } from "@e2e/shared/node";
 import { FixtureService } from "./fixtures.ts";
 import { RunLogger } from "./logger.ts";
 import { Mailbox } from "./mail.ts";
@@ -188,6 +192,8 @@ export async function executeRun(run: Run, deps: RunnerDeps): Promise<void> {
       browser = await chromium.launch({ headless: cfg.HEADLESS, executablePath: cfg.BROWSER_EXECUTABLE_PATH });
     }
     const flags = stand.test_flags as StandFlags;
+    const template = getTemplate(run.fixture_template);
+    if (run.fixture_template) log.write("info", `Шаблон тестовых данных: ${template.label}`);
     const mailbox = new Mailbox(stand, secrets.mailbox_token, traceHeaders({ traceId: run.trace_id, runId: run.id }));
     const outputs: SharedOutputs = new Map();
 
@@ -220,7 +226,7 @@ export async function executeRun(run: Run, deps: RunnerDeps): Promise<void> {
         }
         running++;
         try {
-          const status = await executeTest({ run, stand, suite, test, browser, secrets, flags, mailbox, control, log, deps, outputs });
+          const status = await executeTest({ run, stand, suite, test, browser, secrets, flags, template, mailbox, control, log, deps, outputs });
           queue.complete(test.scenario_key, status);
         } catch (e) {
           queue.complete(test.scenario_key, "failed");
@@ -275,6 +281,7 @@ interface TestArgs {
   browser?: Browser;
   secrets: Record<string, string>;
   flags: StandFlags;
+  template: FixtureTemplate;
   mailbox: Mailbox;
   control: RunControl;
   log: RunLogger;
@@ -294,6 +301,8 @@ async function executeTest(a: TestArgs): Promise<TestStatus> {
   let tracePath: string | null = null;
   let storageDump: Record<string, unknown> | null = null;
   const claimed: string[] = [];
+  // Браузерный профиль по локали шаблона — применяется к контексту Playwright (web)
+  const profile: BrowserProfile | undefined = stand.platform === "web" ? browserProfile(a.template.locale) : undefined;
 
   for (let attempt = 1; attempt <= test.max_attempts; attempt++) {
     if (control.cancelled) {
@@ -313,10 +322,10 @@ async function executeTest(a: TestArgs): Promise<TestStatus> {
     try {
       session =
         stand.platform === "web"
-          ? await openWebSession({ browser: a.browser!, stand, run, test, flags: a.flags, cfg, log })
+          ? await openWebSession({ browser: a.browser!, stand, run, test, flags: a.flags, cfg, log, profile })
           : await openMobileSession({ stand, test, log });
 
-      const fixtures = new FixtureService(db, stand, run, test.id, log, claimed);
+      const fixtures = new FixtureService(db, stand, run, test.id, log, claimed, a.template);
       const stepper = new Stepper({ ...a, session, attempt, holdState });
       const base: BaseContext = {
         stand,
@@ -424,7 +433,7 @@ async function executeTest(a: TestArgs): Promise<TestStatus> {
 
   // Артефакт результата в реестр run_results — аддитивно и изолированно: сбой записи не меняет исход теста
   try {
-    await recordResult(db, { run, stand, test, status: finalStatus, error: lastError, storageDump: ok ? storageDump : null });
+    await recordResult(db, { run, stand, test, status: finalStatus, error: lastError, storageDump: ok ? storageDump : null, browserProfile: profile });
   } catch (e) {
     tlog.warn(`Не удалось записать результат в реестр: ${(e as Error).message}`);
   }
