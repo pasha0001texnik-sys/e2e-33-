@@ -1,5 +1,6 @@
 import type { Platform, Run, RunTest, Stand } from "@e2e/shared";
 import type { BrowserContext, Locator, Page } from "@playwright/test";
+import type { CodeProvider, CodeProviderConfig } from "../codes.ts";
 import type { FixtureService } from "../fixtures.ts";
 import type { Mailbox } from "../mail.ts";
 
@@ -13,6 +14,8 @@ export interface StandFlags {
   /** Переопределение селекторов сценариев, ключ → CSS/testid-селектор (для мобильных — "~accessibility-id"). */
   selectors?: Record<string, string>;
   mail_provider?: "mailpit" | "mailhog";
+  /** Источник проверочных кодов (HTTP) в пределах allowlist стенда; см. codes.ts */
+  code_provider?: CodeProviderConfig;
   password_policy?: { minLength?: number; upper?: boolean; lower?: boolean; digits?: boolean; symbols?: boolean };
   ignore_https_errors?: boolean;
   keep_fixtures?: boolean;
@@ -31,6 +34,8 @@ export interface BaseContext {
   flags: StandFlags;
   fixtures: FixtureService;
   mail: Mailbox;
+  /** Адаптер получения проверочного кода из HTTP-источника тестового контура */
+  codes: CodeProvider;
   step<T>(name: string, fn: () => Promise<T>, opts?: StepOptions): Promise<T>;
   log(message: string, data?: Record<string, unknown>): void;
   /**

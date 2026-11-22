@@ -11,6 +11,7 @@ import { traceHeaders } from "@e2e/shared";
 import { syntheticUser } from "@e2e/shared/node";
 import { chromium, type Browser } from "@playwright/test";
 import type { FixtureService, UserFixture } from "./fixtures.ts";
+import { createCodeProvider } from "./codes.ts";
 import { Mailbox } from "./mail.ts";
 import { installNetworkGuards, preflight } from "./preflight.ts";
 import { nextFire } from "./scheduler.ts";
@@ -258,6 +259,7 @@ test("сценарии регистрации, подтверждения поч
       flags: {},
       fixtures,
       mail: new Mailbox(stand),
+      codes: createCodeProvider({ stand, secrets: {}, forbidden: [], signal: new AbortController().signal }),
       step: async (name, fn) => {
         steps.push(`${key}: ${name}`);
         return fn();
