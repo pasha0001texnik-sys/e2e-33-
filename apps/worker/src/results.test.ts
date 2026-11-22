@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { Run, RunTest, Stand } from "@e2e/shared";
+import { getNetProfile } from "@e2e/shared";
 import { recordResult } from "./results.ts";
 
 test("recordResult: собирает поля формы из фикстур, маскирует секреты, не шлёт пароль в form_fields", async () => {
@@ -61,4 +62,46 @@ test("recordResult: region по умолчанию — окружение сте
     storageDump: null,
   });
   assert.equal(region, "qa");
+});
+
+test("recordResult: гео-профиль пишет координаты и переопределяет регион, сетевой — условия", async () => {
+  let args: Record<string, unknown> = {};
+  const db = {
+    from: () => ({ select: () => ({ eq: async () => ({ data: [] }) }) }),
+    rpc: async (_fn: string, a: Record<string, unknown>) => {
+      args = a;
+      return { data: null, error: null };
+    },
+  } as never;
+
+  // Гео-профиль: регион берётся из подписи, координаты попадают в network_profile.geo
+  await recordResult(db, {
+    run: { id: "r" } as Run,
+    stand: { env: "qa", test_flags: { region: "eu-central" } } as unknown as Stand,
+    test: { id: "t", scenario_key: "x" } as RunTest,
+    status: "passed",
+    error: null,
+    storageDump: null,
+    netProfile: getNetProfile("geo-berlin"),
+  });
+  const np = args.p_network_profile as { net_profile?: string; geo?: { latitude: number; region?: string } };
+  assert.equal(np.net_profile, "geo-berlin");
+  assert.equal(np.geo?.latitude, 52.52);
+  assert.equal(args.p_region, "DE / Берлин", "регион берётся из гео-профиля, а не из флагов");
+
+  // Сетевой профиль: условия троттлинга записаны, региона у профиля нет — остаётся флаг стенда
+  await recordResult(db, {
+    run: { id: "r" } as Run,
+    stand: { env: "qa", test_flags: { region: "eu-central" } } as unknown as Stand,
+    test: { id: "t", scenario_key: "x" } as RunTest,
+    status: "passed",
+    error: null,
+    storageDump: null,
+    netProfile: getNetProfile("slow-3g"),
+  });
+  const np2 = args.p_network_profile as { net_profile?: string; latency?: number; download?: number };
+  assert.equal(np2.net_profile, "slow-3g");
+  assert.equal(np2.latency, 400);
+  assert.equal(np2.download, 50_000);
+  assert.equal(args.p_region, "eu-central", "у сетевого профиля нет гео — регион из флагов стенда");
 });

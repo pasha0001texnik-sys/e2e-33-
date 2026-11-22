@@ -119,6 +119,8 @@ export interface Run {
   fixture_template: string | null;
   /** Ключ профиля выполнения: тайминги шагов и политика повторов (@e2e/shared EXEC_PROFILES) */
   exec_profile: string | null;
+  /** Ключ профиля гео-/сетевой эмуляции (@e2e/shared NET_PROFILES); null — дефолт стенда */
+  net_profile: string | null;
   idempotency_key: string | null;
   parent_run_id: string | null;
   schedule_id: string | null;
@@ -240,6 +242,10 @@ export interface NetworkProfile {
   user_agent?: string;
   /** Применённый браузерный профиль (locale, timezone, UA, viewport) */
   browser?: BrowserProfile;
+  /** Ключ применённого профиля гео-/сетевой эмуляции (NET_PROFILES) */
+  net_profile?: string;
+  /** Применённая гео-эмуляция: координаты и подпись региона */
+  geo?: { latitude: number; longitude: number; accuracy?: number; region?: string } | null;
   [key: string]: unknown;
 }
 
