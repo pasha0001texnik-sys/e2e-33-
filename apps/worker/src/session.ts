@@ -28,6 +28,8 @@ export interface TestSession {
   assertSafe(): void;
   /** Закрывает сессию; при keepTrace возвращает zip трейса Playwright */
   close(keepTrace: boolean): Promise<Buffer | null>;
+  /** Дамп cookies/localStorage (web). null для мобильных и если захват выключен. */
+  storageDump(): Promise<Record<string, unknown> | null>;
 }
 
 export async function openWebSession(o: {
@@ -90,6 +92,13 @@ export async function openWebSession(o: {
     assertSafe() {
       if (guard.violations.length) {
         throw new GuardError(`Запрос ушёл на хост вне allowlist: ${guard.violations[0]}. Тест остановлен.`);
+      }
+    },
+    async storageDump() {
+      try {
+        return (await context.storageState()) as unknown as Record<string, unknown>;
+      } catch {
+        return null;
       }
     },
     async close(keepTrace) {
@@ -172,6 +181,9 @@ export async function openMobileSession(o: { stand: Stand; test: RunTest; log: R
     assertSafe() {
       // трафик нативного приложения воркер не перехватывает: защиту дают сборка под тестовый
       // контур и маркер /health стенда, проверенный до старта
+    },
+    async storageDump() {
+      return null;
     },
     async close() {
       await driver.deleteSession().catch(() => {});

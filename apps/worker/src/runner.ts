@@ -23,6 +23,7 @@ import { FixtureService } from "./fixtures.ts";
 import { RunLogger } from "./logger.ts";
 import { Mailbox } from "./mail.ts";
 import { preflight } from "./preflight.ts";
+import { recordResult } from "./results.ts";
 import { DependencyQueue } from "./queue.ts";
 import { getScenario } from "./scenarios/index.ts";
 import {
@@ -291,6 +292,7 @@ async function executeTest(a: TestArgs): Promise<TestStatus> {
   let lastError: string | null = null;
   let lastKind: ErrorKind | null = null;
   let tracePath: string | null = null;
+  let storageDump: Record<string, unknown> | null = null;
   const claimed: string[] = [];
 
   for (let attempt = 1; attempt <= test.max_attempts; attempt++) {
@@ -356,6 +358,13 @@ async function executeTest(a: TestArgs): Promise<TestStatus> {
 
     // Трейс сохраняем при падении/flaky (или всегда в режиме "on")
     const keepTrace = cfg.TRACE_MODE === "on" || (cfg.TRACE_MODE === "on-failure" && (!ok || attempt > 1));
+    if (session && (a.flags as StandFlags & { capture_storage?: boolean }).capture_storage) {
+      try {
+        storageDump = (await session.storageDump()) ?? storageDump;
+      } catch {
+        /* захват дампа не влияет на исход теста */
+      }
+    }
     const trace = session ? await session.close(keepTrace) : null;
     if (trace) tracePath = await artifacts.upload(Artifacts.path(run.id, test.id, attempt, "trace.zip"), trace, "application/zip");
 
@@ -412,6 +421,13 @@ async function executeTest(a: TestArgs): Promise<TestStatus> {
   // Промежуточная сводка — список прогонов показывает прогресс, не дожидаясь конца
   const { data: all } = await db.from("run_tests").select("status, duration_ms").eq("run_id", run.id);
   if (all) await db.from("runs").update({ summary: summarize(all as { status: TestStatus; duration_ms: number | null }[]) }).eq("id", run.id);
+
+  // Артефакт результата в реестр run_results — аддитивно и изолированно: сбой записи не меняет исход теста
+  try {
+    await recordResult(db, { run, stand, test, status: finalStatus, error: lastError, storageDump: ok ? storageDump : null });
+  } catch (e) {
+    tlog.warn(`Не удалось записать результат в реестр: ${(e as Error).message}`);
+  }
   return finalStatus;
 }
 
