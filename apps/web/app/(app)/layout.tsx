@@ -11,6 +11,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
 
   const nav = [
     { href: "/runs", label: "Прогоны" },
+    { href: "/results", label: "Результаты" },
     { href: "/schedules", label: "Расписания" },
     { href: "/fixtures", label: "Фикстуры" },
     { href: "/suites", label: "Сюиты" },

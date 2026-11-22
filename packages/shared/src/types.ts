@@ -224,6 +224,34 @@ export interface Fixture {
   updated_at: string;
 }
 
+export interface NetworkProfile {
+  /** Байт/с на скачивание (эмуляция throttling), null — без ограничения */
+  download?: number | null;
+  upload?: number | null;
+  /** Доп. задержка, мс */
+  latency?: number | null;
+  offline?: boolean;
+  user_agent?: string;
+  [key: string]: unknown;
+}
+
+/** Артефакт выполнения одного сценария в прогоне. storage_dump виден только воркеру. */
+export interface RunResult {
+  id: string;
+  run_id: string;
+  run_test_id: string;
+  scenario_key: string;
+  status: TestStatus;
+  /** Сгенерированные поля формы; секреты замаскированы */
+  form_fields: Record<string, unknown>;
+  network_profile: NetworkProfile;
+  region: string | null;
+  error: string | null;
+  /** Дамп cookies/localStorage — не приходит в клиент через Data API */
+  storage_dump?: Record<string, unknown>;
+  created_at: string;
+}
+
 export interface AuditEntry {
   id: number;
   actor: string | null;

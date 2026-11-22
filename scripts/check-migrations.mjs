@@ -250,4 +250,42 @@ await db.exec(`reset role`);
 await as(null);
 console.log("✓ передача фикстур между тестами одного прогона");
 
+// ------------------------------------------------------------------ run_results
+// запись результата доступна только воркеру (service_role)
+await db.exec(`set role authenticated`);
+await as(admin);
+await expectError(`select worker_record_result($1, $2, 'signup.email', 'passed')`, /permission denied/, [mobRun, t1]);
+await expectError(`select storage_dump from run_results`, /permission denied|does not exist/);
+await db.exec(`reset role`);
+await as(null);
+
+await db.query(
+  `select worker_record_result($1, $2, 'signup.email', 'passed', '{"email":"e2e@mail.test","password":"x"}'::jsonb, '{"latency":40}'::jsonb, 'eu', null, '{"cookies":[{"name":"sid","value":"secret"}]}'::jsonb)`,
+  [mobRun, t1],
+);
+const rr = await one(`select scenario_key, status, form_fields, network_profile, region from run_results where run_test_id = $1`, [t1]);
+assert.equal(rr.status, "passed");
+assert.equal(rr.region, "eu");
+assert.equal(rr.network_profile.latency, 40);
+
+// service_role читает дамп cookies/storage
+await db.exec(`set role service_role`);
+assert.ok((await one(`select storage_dump from run_results where run_test_id = $1`, [t1])).storage_dump.cookies, "воркер читает дамп");
+await db.exec(`reset role`);
+
+// authenticated видит метаданные, но не storage_dump
+await db.exec(`set role authenticated`);
+await as(admin);
+assert.equal((await one(`select status from run_results where run_test_id = $1`, [t1])).status, "passed", "наблюдатель/админ видит результат");
+await expectError(`select storage_dump from run_results where run_test_id = $1`, /permission denied/, [t1]);
+await db.exec(`reset role`);
+await as(null);
+
+// повтор попытки перезаписывает тот же результат (unique по run_test_id)
+await db.query(`select worker_record_result($1, $2, 'signup.email', 'flaky')`, [mobRun, t1]);
+assert.equal((await one(`select count(*)::int c from run_results where run_test_id = $1`, [t1])).c, 1, "один результат на выполнение сценария");
+assert.equal((await one(`select status from run_results where run_test_id = $1`, [t1])).status, "flaky");
+
+console.log("✓ run_results: запись воркером, перезапись попытки, storage_dump скрыт от authenticated");
+
 console.log("\nВсе проверки миграций прошли.");
