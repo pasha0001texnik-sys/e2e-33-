@@ -2,9 +2,10 @@
 // в stand.test_flags.selectors, пути — в stand.test_flags.paths.
 
 import { expect } from "@playwright/test";
+import type { WaitCodeOptions } from "../codes.ts";
 import type { UserFixture } from "../fixtures.ts";
 import { Mailbox } from "../mail.ts";
-import type { ScenarioContext } from "./types.ts";
+import type { BaseContext, ScenarioContext } from "./types.ts";
 
 const DEFAULT_PATHS = { signup: "/signup", login: "/login", onboarding: "/onboarding", home: "/", logout: "/logout" };
 
@@ -85,6 +86,17 @@ export async function verifyEmail(ctx: ScenarioContext, user: UserFixture, since
     await expect(ctx.page.locator(sel(ctx, "verify.done"))).toBeVisible({ timeout: 20000 });
   });
   await ctx.fixtures.markVerified(user.id);
+}
+
+/**
+ * Код подтверждения из HTTP-источника тестового контура (SMS/вебхук-синк) внутри
+ * шага. Источник задаётся в stand.test_flags.code_provider; id — идентификатор
+ * сессии/запроса (телефон, email, request id). При таймауте/ошибке шаг падает,
+ * а причина попадает в run_steps → run_tests → run_results. Работает и для web,
+ * и для мобильных сценариев.
+ */
+export async function getVerificationCode(ctx: BaseContext, id: string, opts?: WaitCodeOptions): Promise<string> {
+  return ctx.step("Получить код подтверждения из источника", () => ctx.codes.waitForCode(id, opts));
 }
 
 export async function logIn(ctx: ScenarioContext, email: string, password: string) {

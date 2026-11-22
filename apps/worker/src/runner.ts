@@ -23,6 +23,7 @@ import {
 } from "@e2e/shared";
 import { chromium, type Browser } from "@playwright/test";
 import { Artifacts } from "./artifacts.ts";
+import { createCodeProvider, type CodeProvider } from "./codes.ts";
 import type { Config } from "./config.ts";
 import { must, type Db } from "./db.ts";
 import { browserProfile } from "@e2e/shared/node";
@@ -236,7 +237,7 @@ export async function executeRun(run: Run, deps: RunnerDeps): Promise<void> {
         }
         running++;
         try {
-          const status = await executeTest({ run, stand, suite, test, browser, secrets, flags, template, execProfile, netProfile, mailbox, control, log, deps, outputs });
+          const status = await executeTest({ run, stand, suite, test, browser, secrets, flags, forbidden, template, execProfile, netProfile, mailbox, control, log, deps, outputs });
           queue.complete(test.scenario_key, status);
         } catch (e) {
           queue.complete(test.scenario_key, "failed");
@@ -291,6 +292,8 @@ interface TestArgs {
   browser?: Browser;
   secrets: Record<string, string>;
   flags: StandFlags;
+  /** Запрещённые хосты стенда (для guard источника кодов) */
+  forbidden: string[];
   template: FixtureTemplate;
   execProfile: ExecProfile;
   netProfile: NetProfile;
@@ -331,6 +334,16 @@ async function executeTest(a: TestArgs): Promise<TestStatus> {
     let session: TestSession | undefined;
     let ok = false;
     const holdState = { holding: false };
+    // Источник проверочных кодов: отменяется и освобождается при завершении попытки
+    const codeAbort = new AbortController();
+    const codes: CodeProvider = createCodeProvider({
+      stand,
+      secrets: a.secrets,
+      forbidden: a.forbidden,
+      headers: traceHeaders({ traceId: run.trace_id, runId: run.id, testId: test.id }),
+      signal: codeAbort.signal,
+      log: (m) => tlog.info(m),
+    });
     try {
       session =
         stand.platform === "web"
@@ -349,6 +362,7 @@ async function executeTest(a: TestArgs): Promise<TestStatus> {
         flags: a.flags,
         fixtures,
         mail: a.mailbox,
+        codes,
         step: (name, fn, opts) => stepper.step(name, fn, opts),
         log: (m, d) => tlog.info(m, d),
         share: (key, value) => {
@@ -406,6 +420,10 @@ async function executeTest(a: TestArgs): Promise<TestStatus> {
     }
     const trace = session ? await session.close(keepTrace) : null;
     if (trace) tracePath = await artifacts.upload(Artifacts.path(run.id, test.id, attempt, "trace.zip"), trace, "application/zip");
+
+    // Отмена in-flight опроса кода и освобождение незакрытых запросов источника
+    codeAbort.abort();
+    await codes.releaseOutstanding().catch(() => {});
 
     if (ok) {
       finalStatus = attempt > 1 ? "flaky" : "passed";

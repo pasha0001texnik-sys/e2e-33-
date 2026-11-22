@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 import type { Run, RunTest, Stand } from "@e2e/shared";
 import { syntheticUser } from "@e2e/shared/node";
 import type { FixtureService, UserFixture } from "./fixtures.ts";
+import { createCodeProvider } from "./codes.ts";
 import { Mailbox } from "./mail.ts";
 import { getScenario } from "./scenarios/index.ts";
 import type { MobileScenarioContext } from "./scenarios/types.ts";
@@ -243,6 +244,7 @@ test("мобильные сценарии через Appium: регистрац�
           flags: {},
           fixtures,
           mail: new Mailbox(standRow),
+          codes: createCodeProvider({ stand: standRow, secrets: {}, forbidden: [], signal: new AbortController().signal }),
           step: async (name, fn) => {
             steps.push(`${key}: ${name}`);
             return fn();
