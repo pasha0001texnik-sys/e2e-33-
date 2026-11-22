@@ -48,17 +48,17 @@ export async function signUp(ctx: ScenarioContext, user: UserFixture) {
     await expect(page.locator(sel(ctx, "signup.email"))).toBeVisible();
   });
   await ctx.step("Заполнить форму регистрации", async () => {
-    await page.locator(sel(ctx, "signup.email")).fill(user.email);
-    await page.locator(sel(ctx, "signup.password")).fill(user.password);
+    await ctx.ui.fill(page.locator(sel(ctx, "signup.email")), user.email);
+    await ctx.ui.fill(page.locator(sel(ctx, "signup.password")), user.password);
     const first = page.locator(sel(ctx, "signup.first_name"));
-    if (await first.count()) await first.fill(user.first_name);
+    if (await first.count()) await ctx.ui.fill(first, user.first_name);
     const last = page.locator(sel(ctx, "signup.last_name"));
-    if (await last.count()) await last.fill(user.last_name);
+    if (await last.count()) await ctx.ui.fill(last, user.last_name);
     const terms = page.locator(sel(ctx, "signup.terms"));
-    if (await terms.count()) await terms.check();
+    if (await terms.count()) await ctx.ui.check(terms);
   });
   await ctx.step("Отправить форму", async () => {
-    await page.locator(sel(ctx, "signup.submit")).click();
+    await ctx.ui.click(page.locator(sel(ctx, "signup.submit")));
     await expect(page.locator(sel(ctx, "signup.done"))).toBeVisible({ timeout: 20000 });
   });
 }
@@ -79,8 +79,8 @@ export async function verifyEmail(ctx: ScenarioContext, user: UserFixture, since
       await ctx.page.goto(link);
     } else {
       const code = Mailbox.extractCode(msg);
-      await ctx.page.locator(sel(ctx, "verify.code")).fill(code);
-      await ctx.page.locator(sel(ctx, "verify.submit")).click();
+      await ctx.ui.fill(ctx.page.locator(sel(ctx, "verify.code")), code);
+      await ctx.ui.click(ctx.page.locator(sel(ctx, "verify.submit")));
     }
     await expect(ctx.page.locator(sel(ctx, "verify.done"))).toBeVisible({ timeout: 20000 });
   });
@@ -94,9 +94,9 @@ export async function logIn(ctx: ScenarioContext, email: string, password: strin
     await expect(page.locator(sel(ctx, "login.email"))).toBeVisible();
   });
   await ctx.step("Ввести учётные данные", async () => {
-    await page.locator(sel(ctx, "login.email")).fill(email);
-    await page.locator(sel(ctx, "login.password")).fill(password);
-    await page.locator(sel(ctx, "login.submit")).click();
+    await ctx.ui.fill(page.locator(sel(ctx, "login.email")), email);
+    await ctx.ui.fill(page.locator(sel(ctx, "login.password")), password);
+    await ctx.ui.click(page.locator(sel(ctx, "login.submit")));
   });
 }
 

@@ -1,5 +1,5 @@
 import type { Platform, Run, RunTest, Stand } from "@e2e/shared";
-import type { BrowserContext, Page } from "@playwright/test";
+import type { BrowserContext, Locator, Page } from "@playwright/test";
 import type { FixtureService } from "../fixtures.ts";
 import type { Mailbox } from "../mail.ts";
 
@@ -42,14 +42,28 @@ export interface BaseContext {
   fromDependency<T extends string | number | boolean | null = string>(scenarioKey: string, key: string): T | undefined;
 }
 
+export interface WebUi {
+  /** Ввод текста с таймингами профиля (задержка между клавишами, паузы, скролл) */
+  fill(locator: Locator, text: string): Promise<void>;
+  click(locator: Locator): Promise<void>;
+  check(locator: Locator): Promise<void>;
+}
+
 export interface ScenarioContext extends BaseContext {
   page: Page;
   context: BrowserContext;
+  ui: WebUi;
+}
+
+export interface MobileUi {
+  fill(element: WebdriverIO.Element, text: string): Promise<void>;
+  tap(element: WebdriverIO.Element): Promise<void>;
 }
 
 export interface MobileScenarioContext extends BaseContext {
   driver: WebdriverIO.Browser;
   platform: Exclude<Platform, "web">;
+  ui: MobileUi;
 }
 
 export interface Scenario {

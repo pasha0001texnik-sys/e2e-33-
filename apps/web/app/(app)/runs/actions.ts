@@ -20,6 +20,7 @@ const newRun = z.object({
   max_retries: z.coerce.number().int().min(0).max(5),
   hold_on_failure: z.boolean(),
   fixture_template: z.string().max(60).optional(),
+  exec_profile: z.string().max(60).optional(),
   only_scenarios: z.array(z.string()).optional(),
 });
 
@@ -37,6 +38,7 @@ export async function createRun(_: ActionState, data: FormData): Promise<ActionS
       max_retries: data.get("max_retries"),
       hold_on_failure: data.get("hold_on_failure") === "on",
       fixture_template: data.get("fixture_template") ? String(data.get("fixture_template")) : undefined,
+      exec_profile: data.get("exec_profile") ? String(data.get("exec_profile")) : undefined,
       only_scenarios: only.length ? only : undefined,
     });
     if (!parsed.success) return { error: parsed.error.issues[0]?.message };
@@ -50,6 +52,7 @@ export async function createRun(_: ActionState, data: FormData): Promise<ActionS
         ...parsed.data,
         only_scenarios: parsed.data.only_scenarios ?? null,
         fixture_template: parsed.data.fixture_template ?? null,
+        exec_profile: parsed.data.exec_profile ?? null,
         parallelism: Math.min(parsed.data.parallelism, stand.max_concurrency),
         created_by: user.id,
         trigger: "manual",

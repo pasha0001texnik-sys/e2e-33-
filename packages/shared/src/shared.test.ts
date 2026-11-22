@@ -161,3 +161,17 @@ test("browserProfile: часовой пояс и локаль согласова
   assert.match(bp.user_agent, /Chrome/);
   assert.ok(bp.viewport.width >= 1366);
 });
+
+test("exec-профили: дефолт instant тождественен текущему поведению", async () => {
+  const { getExecProfile, EXEC_PROFILES, pickKeystrokeDelay } = await import("./timings.ts");
+  const d = getExecProfile(null);
+  assert.equal(d.key, "instant");
+  assert.equal(pickKeystrokeDelay(d.timings), 0, "мгновенный ввод");
+  assert.deepEqual(d.retry.retry_on, ["infra"], "по умолчанию повтор только infra");
+  assert.equal(d.retry.base_delay_ms, 2000);
+  const human = getExecProfile("human");
+  const delay = pickKeystrokeDelay(human.timings);
+  assert.ok(delay >= human.timings.keystroke_min_ms && delay <= human.timings.keystroke_max_ms);
+  assert.equal(getExecProfile("stable").retry.retry_on.includes("timeout"), true);
+  assert.equal(EXEC_PROFILES[0]!.key, "instant", "instant — первый (дефолт формы)");
+});

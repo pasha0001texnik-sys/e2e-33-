@@ -2,14 +2,15 @@ import {
   CancelledError,
   classifyError,
   finalRunStatus,
-  isRetryable,
   maskSecrets,
   summarize,
   traceHeaders,
   withDependencies,
+  getExecProfile,
   getTemplate,
   type BrowserProfile,
   type ErrorKind,
+  type ExecProfile,
   type FixtureTemplate,
   type HoldAction,
   type Run,
@@ -23,6 +24,7 @@ import { Artifacts } from "./artifacts.ts";
 import type { Config } from "./config.ts";
 import { must, type Db } from "./db.ts";
 import { browserProfile } from "@e2e/shared/node";
+import { Interactor, interactMobileFill, interactMobileTap } from "./interact.ts";
 import { FixtureService } from "./fixtures.ts";
 import { RunLogger } from "./logger.ts";
 import { Mailbox } from "./mail.ts";
@@ -194,6 +196,8 @@ export async function executeRun(run: Run, deps: RunnerDeps): Promise<void> {
     const flags = stand.test_flags as StandFlags;
     const template = getTemplate(run.fixture_template);
     if (run.fixture_template) log.write("info", `Шаблон тестовых данных: ${template.label}`);
+    const execProfile = getExecProfile(run.exec_profile);
+    if (run.exec_profile) log.write("info", `Профиль выполнения: ${execProfile.label}`);
     const mailbox = new Mailbox(stand, secrets.mailbox_token, traceHeaders({ traceId: run.trace_id, runId: run.id }));
     const outputs: SharedOutputs = new Map();
 
@@ -226,7 +230,7 @@ export async function executeRun(run: Run, deps: RunnerDeps): Promise<void> {
         }
         running++;
         try {
-          const status = await executeTest({ run, stand, suite, test, browser, secrets, flags, template, mailbox, control, log, deps, outputs });
+          const status = await executeTest({ run, stand, suite, test, browser, secrets, flags, template, execProfile, mailbox, control, log, deps, outputs });
           queue.complete(test.scenario_key, status);
         } catch (e) {
           queue.complete(test.scenario_key, "failed");
@@ -282,6 +286,7 @@ interface TestArgs {
   secrets: Record<string, string>;
   flags: StandFlags;
   template: FixtureTemplate;
+  execProfile: ExecProfile;
   mailbox: Mailbox;
   control: RunControl;
   log: RunLogger;
@@ -327,6 +332,7 @@ async function executeTest(a: TestArgs): Promise<TestStatus> {
 
       const fixtures = new FixtureService(db, stand, run, test.id, log, claimed, a.template);
       const stepper = new Stepper({ ...a, session, attempt, holdState });
+      const interactor = new Interactor(a.execProfile.timings);
       const base: BaseContext = {
         stand,
         run,
@@ -354,8 +360,25 @@ async function executeTest(a: TestArgs): Promise<TestStatus> {
 
       const body =
         session.kind === "web"
-          ? scenario.run!({ ...base, page: session.web!.page, context: session.web!.context } as ScenarioContext)
-          : scenario.runMobile!({ ...base, driver: session.mobile!.driver, platform: session.mobile!.platform } as MobileScenarioContext);
+          ? scenario.run!({
+              ...base,
+              page: session.web!.page,
+              context: session.web!.context,
+              ui: {
+                fill: (loc, text) => interactor.fill(loc, text),
+                click: (loc) => interactor.click(loc),
+                check: (loc) => interactor.check(loc),
+              },
+            } as ScenarioContext)
+          : scenario.runMobile!({
+              ...base,
+              driver: session.mobile!.driver,
+              platform: session.mobile!.platform,
+              ui: {
+                fill: (el, text) => interactMobileFill(el, text, a.execProfile),
+                tap: (el) => interactMobileTap(el, a.execProfile),
+              },
+            } as MobileScenarioContext);
       await withTestTimeout(body, suite.test_timeout_sec, holdState, control);
       session.assertSafe();
       ok = true;
@@ -387,9 +410,9 @@ async function executeTest(a: TestArgs): Promise<TestStatus> {
       finalStatus = "cancelled";
       break;
     }
-    if (isRetryable(lastKind!) && attempt < test.max_attempts) {
-      tlog.warn(`Инфраструктурный сбой, повтор теста целиком со свежими фикстурами (${attempt + 1}/${test.max_attempts})`);
-      await sleep(2000 * attempt);
+    if (a.execProfile.retry.retry_on.includes(lastKind!) && attempt < test.max_attempts) {
+      tlog.warn(`Повтор теста (${lastKind}) целиком со свежими фикстурами (${attempt + 1}/${test.max_attempts})`);
+      await sleep(a.execProfile.retry.base_delay_ms * attempt);
       continue;
     }
     finalStatus = "failed";

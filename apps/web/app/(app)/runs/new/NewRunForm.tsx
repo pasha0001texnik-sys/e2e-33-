@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { FIXTURE_TEMPLATES, getTemplate, LOCALE_LABEL, SCENARIO_CATALOG } from "@e2e/shared";
+import { EXEC_PROFILES, FIXTURE_TEMPLATES, getExecProfile, getTemplate, LOCALE_LABEL, SCENARIO_CATALOG } from "@e2e/shared";
 import { ActionForm, SubmitButton } from "@/components/forms";
 import { Card, Field } from "@/components/ui";
 import { createRun } from "../actions";
@@ -38,6 +38,7 @@ export function NewRunForm({
   const suite = suites.find((s) => s.id === suiteId);
   const stand = stands.find((s) => s.id === standId);
   const [template, setTemplate] = useState(FIXTURE_TEMPLATES[0]!.key);
+  const [execProfile, setExecProfile] = useState(EXEC_PROFILES[0]!.key);
   const names = useMemo(() => new Map(SCENARIO_CATALOG.map((s) => [s.key, s.name])), []);
   const deps = useMemo(() => new Map(SCENARIO_CATALOG.map((s) => [s.key, s.dependsOn])), []);
 
@@ -111,6 +112,24 @@ export function NewRunForm({
                 {FIXTURE_TEMPLATES.map((t) => (
                   <option key={t.key} value={t.key}>
                     {t.label}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field
+              label="Профиль выполнения"
+              hint={(() => {
+                const p = getExecProfile(execProfile);
+                const t = p.timings;
+                const typing = t.keystroke_max_ms > 0 ? `ввод ${t.keystroke_min_ms}–${t.keystroke_max_ms} мс/клавишу` : "мгновенный ввод";
+                const retry = `повтор: ${p.retry.retry_on.join(", ")} · задержка ${p.retry.base_delay_ms} мс`;
+                return `${typing} · ${retry}`;
+              })()}
+            >
+              <select name="exec_profile" className="input" value={execProfile} onChange={(e) => setExecProfile(e.target.value)}>
+                {EXEC_PROFILES.map((p) => (
+                  <option key={p.key} value={p.key}>
+                    {p.label}
                   </option>
                 ))}
               </select>
