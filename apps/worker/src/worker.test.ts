@@ -300,6 +300,61 @@ test("каталог сценариев в shared совпадает с реес
   assert.deepEqual(norm(SCENARIO_CATALOG), norm(listScenarios()));
 });
 
+test("сквозной сценарий e2e.full-signup: регистрация → подтверждение → вход", { skip: !hasChrome && "нет Chrome", timeout: 60000 }, async () => {
+  const created: UserFixture[] = [];
+  const verified = new Set<string>();
+  const fixtures = {
+    async createUser() {
+      const u = { id: `e2e-${created.length + 1}`, ...syntheticUser({ runId: run.id, n: 200 + created.length, mailDomain: stand.mail_domain! }) };
+      created.push(u);
+      return u;
+    },
+    async claimUser() {
+      return null;
+    },
+    async markVerified(id: string) {
+      verified.add(id);
+    },
+    async adopt() {
+      return null;
+    },
+    async markFailed() {},
+  } as unknown as FixtureService;
+
+  const steps: string[] = [];
+  const context = await browser!.newContext({ baseURL: base, serviceWorkers: "block" });
+  await installNetworkGuards(context, stand, () => {});
+  const ctx: ScenarioContext = {
+    page: await context.newPage(),
+    context,
+    ui: { fill: (loc, t) => loc.fill(t), click: (loc) => loc.click(), check: (loc) => loc.check() },
+    stand,
+    run,
+    test: { id: "e2e", scenario_key: "e2e.full-signup" } as RunTest,
+    attempt: 1,
+    secrets: {},
+    flags: {},
+    fixtures,
+    mail: new Mailbox(stand),
+    codes: createCodeProvider({ stand, secrets: {}, forbidden: [], signal: new AbortController().signal }),
+    step: async (name, fn) => {
+      steps.push(name);
+      return fn();
+    },
+    log: () => {},
+    share: () => {},
+    fromDependency: () => undefined,
+  };
+
+  await getScenario("e2e.full-signup")!.run!(ctx);
+  await context.close();
+
+  assert.equal(created.length, 1, "сценарий создаёт одного пользователя");
+  assert.ok(verified.has(created[0]!.id), "пользователь помечен подтверждённым");
+  assert.ok(users.get(created[0]!.email)?.verified, "стенд отметил почту подтверждённой (путь по письму)");
+  assert.ok(steps.includes("Проверить вход в продукт"), "дошёл до проверки входа");
+});
+
 test("сетевой guard: редирект со стенда на чужой хост не проходит", { skip: !hasChrome && "нет Chrome", timeout: 30000 }, async () => {
   let outsideHits = 0;
   const outside = createServer((_q, r) => {

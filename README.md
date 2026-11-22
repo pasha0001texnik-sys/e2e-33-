@@ -112,21 +112,11 @@ docker compose up -d --scale worker=3          # больше воркеров
   "paths": { "signup": "/register", "login": "/sign-in" },
   "selectors": { "login.submit": "button[type=submit]" },
   "password_policy": { "minLength": 12, "symbols": true },
-  "keep_fixtures": false,
-  "code_provider": {
-    "url": "https://sms.qa.example.test/",
-    "path": "/codes/{id}",
-    "token_secret": "codes_token",
-    "release_path": "/codes/{id}",
-    "release_method": "DELETE",
-    "extract": { "field": "code" },
-    "timeout_ms": 60000,
-    "poll_interval_ms": 2000
-  }
+  "keep_fixtures": false
 }
 ```
 
-`code_provider` — универсальный адаптер получения проверочного кода из HTTP-источника **внутри тестового контура**: сценарий вызывает `ctx.codes.waitForCode(id)` (id — телефон/email/request-id), код извлекается по полю JSON или регэкспу. Как и почтовый API, источник обязан быть в `allowed_hosts` стенда и не в `forbidden_hosts` — запрос с `redirect:"manual"` и таймаутом не уходит за пределы контура (внешние OTP/SMS-сервисы не используются). Таймаут/ошибка фиксируются в результате прогона (`run_tests.error_kind`, `run_results.error`); незакрытый запрос освобождается через `release_path` при завершении или падении шага.
+**Источник кодов (`code_provider`)** — универсальный адаптер получения проверочного кода из HTTP-источника **внутри тестового контура** (перехватчик SMS, вебхук-синк): сценарий вызывает `ctx.codes.waitForCode(id)` (id — телефон/email/request-id), код извлекается по полю JSON или регэкспу. Настраивается в карточке стенда отдельной секцией «Источник кодов» (URL, путь/метод, имя секрета в Vault, правило извлечения, таймауты, release-эндпоинт) — форма валидирует хост против `allowed_hosts`/`forbidden_hosts` и запрещает абсолютные пути, так что источник остаётся сервисом контура (внешние OTP/SMS-сервисы не используются; запрос идёт с `redirect:"manual"` и таймаутом). Таймаут/ошибка фиксируются в результате прогона (`run_tests.error_kind`, `run_results.error`); незакрытый запрос освобождается через `release_path` при завершении или падении шага. Готовый сквозной пример — сценарий `e2e.full-signup` (регистрация → код → вход).
 
 Секреты стенда (`cleanup_token`, `mailbox_token`, при необходимости `codes_token`) хранятся в Supabase Vault и задаются в карточке стенда. После сохранения значение не показывается.
 

@@ -6,37 +6,10 @@
 // То есть источник кодов — сервис стенда, а не произвольный внешний OTP/SMS-API:
 // инвариант egress-allowlist сохраняется. Конфиг живёт в stand.test_flags.code_provider.
 
-import { GuardError, hostMatches, InfraError, isRequestAllowed, type Stand } from "@e2e/shared";
+import { DEFAULT_CODE_REGEX, GuardError, InfraError, requestHostStatus, type CodeExtract, type CodeProviderConfig, type Stand } from "@e2e/shared";
 
-/** Извлечение кода из ответа источника. */
-export interface CodeExtract {
-  /** Регэксп; берётся первая группа, иначе всё совпадение. По умолчанию 4–8 цифр подряд. */
-  regex?: string;
-  /** Точное поле JSON-ответа по dot-пути, например "data.code". Может сочетаться с regex. */
-  field?: string;
-}
-
-/** Конфигурация источника кодов (stand.test_flags.code_provider). */
-export interface CodeProviderConfig {
-  /** Базовый URL источника в пределах allowlist стенда */
-  url: string;
-  /** Шаблон пути запроса; {id} подставляется (URL-экранируется). По умолчанию "{id}". */
-  path?: string;
-  /** Метод опроса (GET по умолчанию). POST отправляет JSON {"id": <id>}. */
-  method?: "GET" | "POST";
-  /** Имя секрета стенда с токеном (Bearer). Значение берётся из Vault, не из конфига. */
-  token_secret?: string;
-  /** Путь освобождения/отмены запроса; {id} подставляется. */
-  release_path?: string;
-  release_method?: "DELETE" | "POST";
-  extract?: CodeExtract;
-  /** Таймаут ожидания кода, мс (по умолчанию 60000) */
-  timeout_ms?: number;
-  /** Интервал опроса, мс (по умолчанию 2000) */
-  poll_interval_ms?: number;
-  /** Таймаут одного HTTP-запроса, мс (по умолчанию 10000) */
-  request_timeout_ms?: number;
-}
+// Тип конфига и чистый валидатор живут в @e2e/shared (общий источник для веб-формы).
+export type { CodeExtract, CodeProviderConfig } from "@e2e/shared";
 
 export interface WaitCodeOptions {
   timeoutMs?: number;
@@ -53,7 +26,6 @@ export interface CodeProvider {
   releaseOutstanding(): Promise<void>;
 }
 
-export const DEFAULT_CODE_REGEX = "\\b(\\d{4,8})\\b";
 const DEFAULTS = { timeout_ms: 60000, poll_interval_ms: 2000, request_timeout_ms: 10000 };
 
 export type FetchImpl = typeof fetch;
@@ -107,18 +79,10 @@ export class HttpCodeProvider implements CodeProvider {
   }
 
   private assertAllowed(url: string): void {
-    if (!isRequestAllowed(url, this.d.stand.allowed_hosts)) {
-      throw new GuardError(`Источник кодов вне allowlist стенда: ${url}`);
-    }
-    let host = "";
-    try {
-      host = new URL(url).hostname.toLowerCase();
-    } catch {
-      throw new GuardError(`Некорректный URL источника кодов: ${url}`);
-    }
-    if (this.d.forbidden.some((p) => hostMatches(host, p))) {
-      throw new GuardError(`Источник кодов на запрещённом хосте: ${host}`);
-    }
+    const status = requestHostStatus(url, this.d.stand.allowed_hosts, this.d.forbidden);
+    if (status === "invalid") throw new GuardError(`Некорректный URL источника кодов: ${url}`);
+    if (status === "forbidden") throw new GuardError(`Источник кодов на запрещённом хосте: ${url}`);
+    if (status !== "ok") throw new GuardError(`Источник кодов вне allowlist стенда: ${url}`);
   }
 
   private authHeaders(json = false): Record<string, string> {
