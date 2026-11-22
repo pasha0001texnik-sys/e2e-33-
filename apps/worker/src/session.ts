@@ -4,7 +4,7 @@
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { GuardError, traceHeaders, type NetworkError, type Run, type RunTest, type Stand } from "@e2e/shared";
+import { GuardError, traceHeaders, type BrowserProfile, type NetworkError, type Run, type RunTest, type Stand } from "@e2e/shared";
 import type { Browser, BrowserContext, Page } from "@playwright/test";
 import { remote } from "webdriverio";
 import type { Config } from "./config.ts";
@@ -40,14 +40,18 @@ export async function openWebSession(o: {
   flags: StandFlags;
   cfg: Config;
   log: RunLogger;
+  /** Браузерный профиль по локали шаблона прогона: locale, timezone, UA, viewport */
+  profile?: BrowserProfile;
 }): Promise<TestSession> {
-  const { browser, stand, run, test, flags, cfg, log } = o;
+  const { browser, stand, run, test, flags, cfg, log, profile } = o;
   const tlog = log.for(test.id);
   // Чистый контекст на каждую попытку: без кэша, cookies и storage
   const context = await browser.newContext({
     baseURL: stand.base_url,
-    locale: "ru-RU",
-    viewport: { width: 1366, height: 900 },
+    locale: profile?.locale ?? "ru-RU",
+    timezoneId: profile?.timezone,
+    userAgent: profile?.user_agent,
+    viewport: profile?.viewport ?? { width: 1366, height: 900 },
     ignoreHTTPSErrors: flags.ignore_https_errors === true,
     serviceWorkers: "block", // иначе запросы SW обходят сетевой guard
   });

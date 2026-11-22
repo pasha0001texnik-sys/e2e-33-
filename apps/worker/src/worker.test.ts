@@ -371,3 +371,37 @@ test("trace_id доходит до стенда в заголовках, фор�
     await context.close();
   }
 });
+
+test("browser profile применяется к контексту Playwright (locale, timezone, UA)", { skip: !hasChrome && "нет Chrome", timeout: 30000 }, async () => {
+  const { openWebSession } = await import("./session.ts");
+  const { browserProfile } = await import("@e2e/shared/node");
+  const { RunLogger } = await import("./logger.ts");
+  const fakeDb = { from: () => ({ insert: async () => ({ error: null }) }) } as never;
+  const log = new RunLogger(fakeDb, run.id, run.trace_id);
+  const profile = browserProfile("de-DE");
+  const session = await openWebSession({
+    browser: browser!,
+    stand,
+    run,
+    test: { id: "bp-1" } as RunTest,
+    flags: {},
+    cfg: { TRACE_MODE: "off", HEADLESS: true } as never,
+    log,
+    profile,
+  });
+  try {
+    const page = session.web!.page;
+    await page.goto("/signup");
+    const env = await page.evaluate(() => ({
+      tz: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      lang: navigator.language,
+      ua: navigator.userAgent,
+    }));
+    assert.equal(env.tz, "Europe/Berlin", "timezone из профиля");
+    assert.equal(env.lang, "de-DE", "locale из профиля");
+    assert.equal(env.ua, profile.user_agent, "User-Agent из профиля");
+  } finally {
+    await session.close(false);
+    await log.close();
+  }
+});

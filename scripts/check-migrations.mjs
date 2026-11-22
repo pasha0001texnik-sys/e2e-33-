@@ -288,4 +288,18 @@ assert.equal((await one(`select status from run_results where run_test_id = $1`,
 
 console.log("✓ run_results: запись воркером, перезапись попытки, storage_dump скрыт от authenticated");
 
+// ------------------------------------------------------------------ fixture_template (миграция 005)
+assert.ok((await one(`select count(*)::int c from information_schema.columns where table_name='runs' and column_name='fixture_template'`)).c === 1, "колонка runs.fixture_template есть");
+// QA может задать шаблон при создании прогона
+await db.exec(`set role authenticated`);
+await as(viewer); // роль qa (повышен ранее)
+const tplRun = (await one(
+  `insert into runs (suite_id, stand_id, build_tag, created_by, trigger, status, fixture_template) values ($1, $2, 'tpl', $3, 'manual', 'queued', 'us-adult') returning id`,
+  [suite, qa, viewer],
+)).id;
+await db.exec(`reset role`);
+await as(null);
+assert.equal((await one(`select fixture_template from runs where id = $1`, [tplRun])).fixture_template, "us-adult");
+console.log("✓ fixture_template: колонка и вставка шаблона из формы запуска");
+
 console.log("\nВсе проверки миграций прошли.");

@@ -117,3 +117,47 @@ test("зависимости сценариев раскрываются тра�
   const cyc = new Map([["a", { dependsOn: ["b"] }], ["b", { dependsOn: ["a"] }]]);
   assert.throws(() => withDependencies(["a"], (k) => cyc.get(k)), /Циклическая/);
 });
+
+test("generatePerson: локали, пол, возраст, логин, пароль по политике", async () => {
+  const { generatePerson, birthDateForAge } = await import("./fixtures.ts");
+  const { getTemplate } = await import("./templates.ts");
+  for (const key of ["default", "us-adult", "de-adult"]) {
+    const t = getTemplate(key);
+    const p = generatePerson({ runId: "8f14e45f-ceea-467a-9575-1b2b0c8f2a11", n: 1, mailDomain: "mail.qa.example.test", template: key });
+    assert.equal(p.locale, t.locale);
+    assert.ok(["male", "female"].includes(p.gender));
+    assert.match(p.birth_date, /^\d{4}-\d{2}-\d{2}$/);
+    const age = (Date.now() - new Date(p.birth_date).getTime()) / (365.25 * 864e5);
+    assert.ok(age >= t.min_age - 1 && age <= t.max_age + 1, `возраст ${age} вне диапазона ${t.min_age}..${t.max_age}`);
+    assert.match(p.login, /^[a-z]+\.[a-z]+\d{3}$/, `логин ASCII: ${p.login}`);
+    assert.match(p.email, /^e2e\+/);
+    assert.ok(p.password.length >= (t.password_policy.minLength ?? 14));
+    if (t.password_policy.symbols === false) assert.doesNotMatch(p.password, /[!@#$%^&*\-_=+]/);
+  }
+  assert.throws(() => birthDateForAge(40, 20));
+});
+
+test("ru-RU: фамилия согласована с полом; транслитерация кириллицы в логин", async () => {
+  const { generatePerson } = await import("./fixtures.ts");
+  let sawFemale = false;
+  for (let i = 0; i < 40; i++) {
+    const p = generatePerson({ runId: "r", n: i, mailDomain: "m.test", locale: "ru-RU", template: "default" });
+    assert.match(p.login, /^[a-z.]+\d{3}$/, `логин без кириллицы: ${p.login}`);
+    if (p.gender === "female") {
+      sawFemale = true;
+      assert.match(p.last_name, /а$/, `женская фамилия: ${p.last_name}`);
+    }
+  }
+  assert.ok(sawFemale);
+});
+
+test("browserProfile: часовой пояс и локаль согласованы", async () => {
+  const { browserProfile } = await import("./fixtures.ts");
+  assert.equal(browserProfile("ru-RU").timezone, "Europe/Moscow");
+  assert.equal(browserProfile("en-US").timezone, "America/New_York");
+  assert.equal(browserProfile("de-DE").timezone, "Europe/Berlin");
+  const bp = browserProfile("en-US");
+  assert.equal(bp.locale, "en-US");
+  assert.match(bp.user_agent, /Chrome/);
+  assert.ok(bp.viewport.width >= 1366);
+});
