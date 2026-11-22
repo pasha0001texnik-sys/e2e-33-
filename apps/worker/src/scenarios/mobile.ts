@@ -45,13 +45,13 @@ export async function isVisible(ctx: MobileScenarioContext, key: string): Promis
 async function fill(ctx: MobileScenarioContext, key: string, value: string) {
   const e = el(ctx, key);
   await e.waitForDisplayed({ timeoutMsg: `Поле «${key}» не появилось` });
-  await e.setValue(value);
+  await ctx.ui.fill(e as unknown as WebdriverIO.Element, value);
 }
 
 async function tap(ctx: MobileScenarioContext, key: string) {
   const e = el(ctx, key);
   await e.waitForDisplayed({ timeoutMsg: `Кнопка «${key}» не появилась` });
-  await e.click();
+  await ctx.ui.tap(e as unknown as WebdriverIO.Element);
 }
 
 /** Если на стартовом экране есть переход к форме — нажимаем его. */

@@ -90,18 +90,18 @@ export const SCENARIOS: Scenario[] = [
         await expect(ctx.page.locator(sel(ctx, "onboarding.company"))).toBeVisible({ timeout: 20000 });
       });
       await ctx.step("Заполнить анкету", async () => {
-        await ctx.page.locator(sel(ctx, "onboarding.company")).fill(`E2E ${user.last_name}`);
+        await ctx.ui.fill(ctx.page.locator(sel(ctx, "onboarding.company")), `E2E ${user.last_name}`);
         const role = ctx.page.locator(sel(ctx, "onboarding.role"));
         if (await role.count()) {
           const tag = await role.evaluate((el) => el.tagName.toLowerCase());
           if (tag === "select") await role.selectOption({ index: 1 });
-          else await role.fill("QA");
+          else await ctx.ui.fill(role, "QA");
         }
         const next = ctx.page.locator(sel(ctx, "onboarding.next"));
-        if (await next.count()) await next.click();
+        if (await next.count()) await ctx.ui.click(next);
       });
       await ctx.step("Завершить онбординг", async () => {
-        await ctx.page.locator(sel(ctx, "onboarding.finish")).click();
+        await ctx.ui.click(ctx.page.locator(sel(ctx, "onboarding.finish")));
         await expect(ctx.page.locator(sel(ctx, "onboarding.done"))).toBeVisible({ timeout: 20000 });
       });
       ctx.share("user", user.id); // пользователь с пройденным онбордингом

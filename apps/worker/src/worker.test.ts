@@ -245,6 +245,11 @@ test("сценарии регистрации, подтверждения поч
     const ctx: ScenarioContext = {
       page: await context.newPage(),
       context,
+      ui: {
+        fill: (loc, t) => loc.fill(t),
+        click: (loc) => loc.click(),
+        check: (loc) => loc.check(),
+      },
       stand,
       run,
       test: { id: key, scenario_key: key } as RunTest,
@@ -403,5 +408,34 @@ test("browser profile применяется к контексту Playwright (l
   } finally {
     await session.close(false);
     await log.close();
+  }
+});
+
+test("Interactor: human-профиль печатает по клавишам с задержкой; instant — мгновенно", { skip: !hasChrome && "нет Chrome", timeout: 30000 }, async () => {
+  const { Interactor } = await import("./interact.ts");
+  const { getExecProfile } = await import("@e2e/shared");
+  const context = await browser!.newContext({ baseURL: base, serviceWorkers: "block" });
+  try {
+    await installNetworkGuards(context, stand, () => {});
+    const page = await context.newPage();
+    await page.goto("/signup");
+    const field = page.locator('[data-testid="signup-email"]');
+
+    const human = new Interactor(getExecProfile("human").timings);
+    const t0 = Date.now();
+    await human.fill(field, "abcdefgh@mail.qa.example.test");
+    const humanMs = Date.now() - t0;
+    assert.equal(await field.inputValue(), "abcdefgh@mail.qa.example.test");
+    assert.ok(humanMs >= 28 * 40, `ввод с задержкой занял ${humanMs} мс`);
+
+    const instant = new Interactor(getExecProfile("instant").timings);
+    await field.fill("");
+    const t1 = Date.now();
+    await instant.fill(field, "x@mail.qa.example.test");
+    const instantMs = Date.now() - t1;
+    assert.equal(await field.inputValue(), "x@mail.qa.example.test");
+    assert.ok(instantMs < humanMs, "instant быстрее human");
+  } finally {
+    await context.close();
   }
 });

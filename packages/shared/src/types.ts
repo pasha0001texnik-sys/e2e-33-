@@ -117,6 +117,8 @@ export interface Run {
   hold_on_failure: boolean;
   /** Ключ шаблона генерации тестовых данных (@e2e/shared FIXTURE_TEMPLATES) */
   fixture_template: string | null;
+  /** Ключ профиля выполнения: тайминги шагов и политика повторов (@e2e/shared EXEC_PROFILES) */
+  exec_profile: string | null;
   idempotency_key: string | null;
   parent_run_id: string | null;
   schedule_id: string | null;

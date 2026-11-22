@@ -302,4 +302,17 @@ await as(null);
 assert.equal((await one(`select fixture_template from runs where id = $1`, [tplRun])).fixture_template, "us-adult");
 console.log("✓ fixture_template: колонка и вставка шаблона из формы запуска");
 
+// ------------------------------------------------------------------ exec_profile (миграция 006)
+assert.equal((await one(`select count(*)::int c from information_schema.columns where table_name='runs' and column_name='exec_profile'`)).c, 1, "колонка runs.exec_profile есть");
+await db.exec(`set role authenticated`);
+await as(viewer); // qa
+const epRun = (await one(
+  `insert into runs (suite_id, stand_id, build_tag, created_by, trigger, status, exec_profile) values ($1, $2, 'ep', $3, 'manual', 'queued', 'human') returning id`,
+  [suite, qa, viewer],
+)).id;
+await db.exec(`reset role`);
+await as(null);
+assert.equal((await one(`select exec_profile from runs where id = $1`, [epRun])).exec_profile, "human");
+console.log("✓ exec_profile: колонка и вставка профиля из формы запуска");
+
 console.log("\nВсе проверки миграций прошли.");

@@ -231,6 +231,10 @@ test("мобильные сценарии через Appium: регистрац�
         const ctx: MobileScenarioContext = {
           driver: session.mobile!.driver,
           platform: "android",
+          ui: {
+            fill: (el, t) => el.setValue(t),
+            tap: (el) => el.click(),
+          },
           stand: standRow,
           run,
           test: { id: key, scenario_key: key, depends_on: [] } as unknown as RunTest,
