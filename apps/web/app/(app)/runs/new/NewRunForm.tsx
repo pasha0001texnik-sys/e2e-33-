@@ -38,6 +38,7 @@ export function NewRunForm({
   const suite = suites.find((s) => s.id === suiteId);
   const stand = stands.find((s) => s.id === standId);
   const names = useMemo(() => new Map(SCENARIO_CATALOG.map((s) => [s.key, s.name])), []);
+  const deps = useMemo(() => new Map(SCENARIO_CATALOG.map((s) => [s.key, s.dependsOn])), []);
 
   if (!suites.length || !stands.length) {
     return (
@@ -87,6 +88,9 @@ export function NewRunForm({
                   <span>
                     <span className="block">{names.get(k) ?? k}</span>
                     <span className="font-mono text-xs text-ink-3">{k}</span>
+                    {deps.get(k)?.length ? (
+                      <span className="block text-xs text-ink-3">сначала выполнится {deps.get(k)!.join(", ")}</span>
+                    ) : null}
                   </span>
                 </label>
               ))}

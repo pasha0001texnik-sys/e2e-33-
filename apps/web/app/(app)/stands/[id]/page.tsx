@@ -17,6 +17,12 @@ const FLAGS_EXAMPLE = `{
   "keep_fixtures": false
 }`;
 
+const CAPS_EXAMPLE = `{
+  "appium:deviceName": "emulator-5554",
+  "appium:app": "/apps/app-qa.apk",
+  "appium:appPackage": "com.example.app"
+}`;
+
 const MOCKS_EXAMPLE = `{
   "routes": [
     { "url": "**/api/sms/send", "method": "POST", "json": { "ok": true } }
@@ -36,7 +42,7 @@ export default async function StandPage({
   const isAdmin = roleAtLeast(profile.role, "admin");
   const isNew = id === "new";
 
-  let stand: Partial<Stand> = { env: "qa", max_concurrency: 2, max_holds: 1, fixture_ttl_minutes: 120, is_active: true, mocks: {}, test_flags: {} };
+  let stand: Partial<Stand> = { env: "qa", platform: "web", capabilities: {}, max_concurrency: 2, max_holds: 1, fixture_ttl_minutes: 120, is_active: true, mocks: {}, test_flags: {} };
   if (!isNew) {
     if (!/^[0-9a-f-]{36}$/i.test(id)) notFound();
     const { data } = await supabase.from("stands").select("*").eq("id", id).single();
@@ -96,6 +102,35 @@ export default async function StandPage({
                 <label className="flex items-center gap-2 text-sm">
                   <input type="checkbox" name="is_active" defaultChecked={stand.is_active} /> Стенд активен
                 </label>
+              </div>
+            </Card>
+
+            <Card title="Платформа">
+              <div className="grid gap-4 sm:grid-cols-2">
+                <Field label="Тип стенда" hint="web — Playwright в Chrome; android / ios — Appium на эмуляторе или устройстве">
+                  <select name="platform" className="input" defaultValue={stand.platform}>
+                    <option value="web">web</option>
+                    <option value="android">android</option>
+                    <option value="ios">ios</option>
+                  </select>
+                </Field>
+                <Field label="Appium-сервер" hint="Только для android / ios, например http://appium:4723">
+                  <input name="appium_url" className="input font-mono" defaultValue={stand.appium_url ?? ""} placeholder="http://appium:4723" />
+                </Field>
+                <div className="sm:col-span-2">
+                  <Field
+                    label="Capabilities (JSON)"
+                    hint="Сборка приложения под тестовый контур и устройство. Трафик нативного приложения воркер не перехватывает — защиту дают сборка и маркер /health."
+                  >
+                    <textarea
+                      name="capabilities"
+                      rows={5}
+                      className="input font-mono text-xs"
+                      defaultValue={json(stand.capabilities)}
+                      placeholder={CAPS_EXAMPLE}
+                    />
+                  </Field>
+                </div>
               </div>
             </Card>
 

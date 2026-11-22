@@ -1,13 +1,16 @@
 # Воркеры E2E Hub. Веб-панель живёт на Vercel, база — в Supabase.
 #   cp apps/worker/.env.example apps/worker/.env   # заполнить
-#   docker compose up -d --build
-#   docker compose up -d --scale worker=3          # больше воркеров
+#   docker compose up -d --build                    # web-воркер (Playwright)
+#   docker compose up -d --scale worker=3           # больше web-воркеров
+#   docker compose --profile mobile up -d           # + мобильный воркер (нужен Appium, см. README)
 services:
   worker:
     build:
       context: .
       dockerfile: apps/worker/Dockerfile
     env_file: apps/worker/.env
+    environment:
+      WORKER_PLATFORMS: web
     restart: unless-stopped
     init: true
     ipc: host # Chrome стабильнее с общим /dev/shm
@@ -16,3 +19,20 @@ services:
       resources:
         limits:
           memory: 4g
+
+  # Мобильные стенды: воркер управляет эмулятором/устройством через Appium-сервер,
+  # адрес которого задан у стенда (appium_url). Сам Appium с эмулятором запускается
+  # на машине с KVM (Android) или на macOS (iOS) — см. README.
+  worker-mobile:
+    profiles: ["mobile"]
+    build:
+      context: .
+      dockerfile: apps/worker/Dockerfile
+    env_file: apps/worker/.env
+    environment:
+      WORKER_PLATFORMS: android,ios
+      ENABLE_SCHEDULER: "false" # расписания и уборку ведёт web-воркер
+      ENABLE_JANITOR: "false"
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 10m

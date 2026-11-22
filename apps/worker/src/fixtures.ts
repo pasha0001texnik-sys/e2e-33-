@@ -73,12 +73,19 @@ export class FixtureService {
     await this.db.from("fixtures").update({ status: "failed", last_error: error.slice(0, 2000) }).eq("id", id);
   }
 
-  /** Захватывает готового (verified) пользователя на стенде атомарно; null, если свободных нет. */
-  async claimUser(): Promise<UserFixture | null> {
-    const res = await this.db.rpc("worker_claim_fixture", { p_stand: this.stand.id, p_kind: "user", p_test: this.testId });
-    const fx = res.data as Fixture | null;
+  /**
+   * Берёт фикстуру, которую передал тест-зависимость этого же прогона (по id).
+   * null — если её уже занял другой тест или она не из этого прогона.
+   */
+  async adopt(fixtureId: string): Promise<UserFixture | null> {
+    const res = await this.db.rpc("worker_claim_fixture_by_id", { p_fixture: fixtureId, p_run: this.run.id, p_test: this.testId });
+    const fx = (Array.isArray(res.data) ? res.data[0] : res.data) as Fixture | null;
     if (res.error || !fx?.id) return null;
     this.claimed.push(fx.id);
+    return this.toUser(fx);
+  }
+
+  private async toUser(fx: Fixture): Promise<UserFixture> {
     const secret = must(
       await this.db.from("fixtures").select("secret_payload").eq("id", fx.id).single(),
       "fixture secret",
@@ -93,4 +100,14 @@ export class FixtureService {
       locale: String(fx.payload.locale ?? "ru"),
     };
   }
+
+  /** Захватывает готового (verified) пользователя на стенде атомарно; null, если свободных нет. */
+  async claimUser(): Promise<UserFixture | null> {
+    const res = await this.db.rpc("worker_claim_fixture", { p_stand: this.stand.id, p_kind: "user", p_test: this.testId });
+    const fx = (Array.isArray(res.data) ? res.data[0] : res.data) as Fixture | null;
+    if (res.error || !fx?.id) return null;
+    this.claimed.push(fx.id);
+    return this.toUser(fx);
+  }
+
 }

@@ -1,4 +1,4 @@
-import type { Run, RunTest, Stand } from "@e2e/shared";
+import type { Platform, Run, RunTest, Stand } from "@e2e/shared";
 import type { BrowserContext, Page } from "@playwright/test";
 import type { FixtureService } from "../fixtures.ts";
 import type { Mailbox } from "../mail.ts";
@@ -8,9 +8,19 @@ export interface StepOptions {
   timeoutMs?: number;
 }
 
-export interface ScenarioContext {
-  page: Page;
-  context: BrowserContext;
+export interface StandFlags {
+  paths?: Partial<Record<"signup" | "login" | "onboarding" | "home" | "logout", string>>;
+  /** Переопределение селекторов сценариев, ключ → CSS/testid-селектор (для мобильных — "~accessibility-id"). */
+  selectors?: Record<string, string>;
+  mail_provider?: "mailpit" | "mailhog";
+  password_policy?: { minLength?: number; upper?: boolean; lower?: boolean; digits?: boolean; symbols?: boolean };
+  ignore_https_errors?: boolean;
+  keep_fixtures?: boolean;
+  [key: string]: unknown;
+}
+
+/** Общее для web- и мобильных сценариев. */
+export interface BaseContext {
   stand: Stand;
   run: Run;
   test: RunTest;
@@ -23,22 +33,37 @@ export interface ScenarioContext {
   mail: Mailbox;
   step<T>(name: string, fn: () => Promise<T>, opts?: StepOptions): Promise<T>;
   log(message: string, data?: Record<string, unknown>): void;
+  /**
+   * Передать значение зависимым тестам (id фикстуры, номер заказа и т.п.).
+   * Не передавайте секреты: значения видны в панели.
+   */
+  share(key: string, value: string | number | boolean | null): void;
+  /** Значение, которое передал тест-зависимость (только из объявленных в dependsOn). */
+  fromDependency<T extends string | number | boolean | null = string>(scenarioKey: string, key: string): T | undefined;
 }
 
-export interface StandFlags {
-  paths?: Partial<Record<"signup" | "login" | "onboarding" | "home" | "logout", string>>;
-  /** Переопределение селекторов сценариев, ключ → CSS/testid-селектор. */
-  selectors?: Record<string, string>;
-  mail_provider?: "mailpit" | "mailhog";
-  password_policy?: { minLength?: number; upper?: boolean; lower?: boolean; digits?: boolean; symbols?: boolean };
-  ignore_https_errors?: boolean;
-  keep_fixtures?: boolean;
-  [key: string]: unknown;
+export interface ScenarioContext extends BaseContext {
+  page: Page;
+  context: BrowserContext;
+}
+
+export interface MobileScenarioContext extends BaseContext {
+  driver: WebdriverIO.Browser;
+  platform: Exclude<Platform, "web">;
 }
 
 export interface Scenario {
   key: string;
   name: string;
   tags?: string[];
-  run(ctx: ScenarioContext): Promise<void>;
+  /** Сценарии, которые должны пройти раньше этого (в том же прогоне, на том же стенде) */
+  dependsOn?: string[];
+  /** Реализация для web-стендов (Playwright) */
+  run?(ctx: ScenarioContext): Promise<void>;
+  /** Реализация для мобильных стендов (Appium) */
+  runMobile?(ctx: MobileScenarioContext): Promise<void>;
+}
+
+export function supportsPlatform(s: Scenario, platform: Platform): boolean {
+  return platform === "web" ? !!s.run : !!s.runMobile;
 }

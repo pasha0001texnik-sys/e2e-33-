@@ -15,6 +15,7 @@ export default async function SuitesPage({ searchParams }: { searchParams: Promi
   const suites = (data ?? []) as Suite[];
   const editing = suites.find((s) => s.id === edit);
   const names = new Map(SCENARIO_CATALOG.map((s) => [s.key, s.name]));
+  const deps = new Map(SCENARIO_CATALOG.map((s) => [s.key, s.dependsOn]));
 
   return (
     <>
@@ -53,6 +54,7 @@ export default async function SuitesPage({ searchParams }: { searchParams: Promi
                 {s.scenario_keys.map((k) => (
                   <li key={k} className="truncate text-ink-2">
                     <Mono className="text-ink-3">{k}</Mono> {names.get(k)}
+                    {deps.get(k)?.length ? <span className="text-xs text-ink-3"> (после {deps.get(k)!.join(", ")})</span> : null}
                   </li>
                 ))}
               </ol>
@@ -88,6 +90,10 @@ export default async function SuitesPage({ searchParams }: { searchParams: Promi
                       <input type="checkbox" name="scenario_keys" value={sc.key} defaultChecked={editing?.scenario_keys.includes(sc.key)} className="mt-0.5" />
                       <span>
                         {sc.name} <Mono className="text-ink-3">{sc.key}</Mono>
+                        <span className="block text-xs text-ink-3">
+                          {sc.platforms.join(" · ")}
+                          {sc.dependsOn.length > 0 && <> · сначала выполнится {sc.dependsOn.join(", ")}</>}
+                        </span>
                       </span>
                     </label>
                   ))}

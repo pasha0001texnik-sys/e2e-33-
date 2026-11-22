@@ -38,6 +38,7 @@ export default async function StandsPage() {
                   <div className="flex items-center gap-2">
                     <span className="font-semibold">{s.name}</span>
                     <Badge tone={s.env === "staging" ? "warn" : s.env === "qa" ? "info" : "muted"}>{s.env}</Badge>
+                    {s.platform && s.platform !== "web" && <Badge tone="hold">{s.platform}</Badge>}
                   </div>
                   {!s.is_active && <Badge tone="bad">отключён</Badge>}
                 </div>

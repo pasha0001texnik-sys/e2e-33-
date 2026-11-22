@@ -18,6 +18,8 @@ export class Mailbox {
   constructor(
     private stand: Stand,
     private token?: string,
+    /** Заголовки трассировки прогона */
+    private extraHeaders: Record<string, string> = {},
   ) {
     this.provider = (stand.test_flags as { mail_provider?: string }).mail_provider === "mailhog" ? "mailhog" : "mailpit";
   }
@@ -27,7 +29,7 @@ export class Mailbox {
     const url = new URL(path, this.stand.mailbox_api_url).toString();
     if (!isRequestAllowed(url, this.stand.allowed_hosts)) throw new GuardError(`Почтовый API вне allowlist: ${url}`);
     const res = await fetch(url, {
-      headers: this.token ? { Authorization: `Bearer ${this.token}` } : {},
+      headers: { ...this.extraHeaders, ...(this.token ? { Authorization: `Bearer ${this.token}` } : {}) },
       signal: AbortSignal.timeout(10000),
       redirect: "manual", // редирект мог бы увести за пределы allowlist
     });

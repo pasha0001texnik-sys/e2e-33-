@@ -7,6 +7,9 @@ export type Role = (typeof ROLES)[number];
 export const STAND_ENVS = ["dev", "qa", "staging"] as const;
 export type StandEnv = (typeof STAND_ENVS)[number];
 
+export const PLATFORMS = ["web", "android", "ios"] as const;
+export type Platform = (typeof PLATFORMS)[number];
+
 export type RunStatus = "queued" | "running" | "paused" | "passed" | "failed" | "cancelled" | "error";
 export type RunTrigger = "manual" | "schedule" | "webhook" | "rerun";
 export type TestStatus = "queued" | "running" | "on_hold" | "passed" | "flaky" | "failed" | "skipped" | "cancelled";
@@ -42,6 +45,11 @@ export interface Stand {
   slug: string;
   name: string;
   env: StandEnv;
+  platform: Platform;
+  /** Appium-сервер для android/ios */
+  appium_url: string | null;
+  /** W3C capabilities мобильной сессии */
+  capabilities: Record<string, unknown>;
   base_url: string;
   allowed_hosts: string[];
   health_url: string | null;
@@ -150,6 +158,8 @@ export interface RunTest {
   hold_until: string | null;
   hold_action: HoldAction | null;
   hold_by: string | null;
+  depends_on: string[];
+  outputs: Record<string, unknown>;
   created_at: string;
   started_at: string | null;
   finished_at: string | null;

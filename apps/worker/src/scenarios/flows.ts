@@ -113,3 +113,20 @@ export async function verifiedUser(ctx: ScenarioContext): Promise<UserFixture> {
   await verifyEmail(ctx, user, since);
   return user;
 }
+
+/**
+ * Пользователь, которого передал тест-зависимость (ключ "user").
+ * Если зависимость ничего не передала или фикстуру уже занял другой тест — готовим своего.
+ */
+export async function userFromDependency(ctx: ScenarioContext, dependency: string): Promise<UserFixture> {
+  const id = ctx.fromDependency(dependency, "user");
+  if (id) {
+    const user = await ctx.fixtures.adopt(id);
+    if (user) {
+      ctx.log(`Пользователь получен от «${dependency}»: ${user.email}`);
+      return user;
+    }
+    ctx.log(`Фикстура от «${dependency}» недоступна, готовлю своего пользователя`);
+  }
+  return verifiedUser(ctx);
+}

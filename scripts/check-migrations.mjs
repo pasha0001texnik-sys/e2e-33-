@@ -214,4 +214,40 @@ await db.query(`select secret_payload from fixtures limit 1`);
 await db.exec(`reset role`);
 console.log("✓ anon без доступа, service_role видит секреты фикстур");
 
+// ------------------------------------------------------------------ этап 3
+await expectError(
+  `insert into stands (slug, name, env, platform, base_url, allowed_hosts) values ('and0', 'A', 'qa', 'android', 'https://m.example.test', array['m.example.test'])`,
+  /stands_mobile_needs_appium/,
+);
+const android = (await one(
+  `insert into stands (slug, name, env, platform, base_url, allowed_hosts, appium_url, capabilities, max_concurrency)
+   values ('and1', 'Android QA', 'qa', 'android', 'https://m.example.test', array['m.example.test'], 'http://appium:4723', '{"appium:deviceName":"emulator-5554"}', 1)
+   returning id`,
+)).id;
+const mobRun = (await one(`insert into runs (suite_id, stand_id, build_tag, priority) values ($1, $2, 'm1', 1) returning id`, [suite, android])).id;
+for (let i = 0; i < 20; i++) {
+  const got = (await one(`select * from worker_claim_run('web-worker')`)).id;
+  assert.notEqual(got, mobRun, "web-воркер не берёт мобильный прогон");
+  if (!got) break;
+}
+assert.equal((await one(`select * from worker_claim_run('mob', array['android']::stand_platform[])`)).id, mobRun);
+console.log("✓ мобильные стенды: Appium обязателен, очередь по платформам");
+
+const depFx = (await one(
+  `insert into fixtures (stand_id, run_id, kind, payload, status, expires_at) values ($1, $2, 'user', '{}', 'verified', now() + interval '1 hour') returning id`,
+  [android, mobRun],
+)).id;
+const t1 = (await one(`insert into run_tests (run_id, scenario_key, name, depends_on) values ($1, 'a', 'a', '{}') returning id`, [mobRun])).id;
+const t2 = (await one(`insert into run_tests (run_id, scenario_key, name, depends_on) values ($1, 'b', 'b', '{a}') returning id`, [mobRun])).id;
+assert.equal((await one(`select * from worker_claim_fixture_by_id($1, $2, $3)`, [depFx, failedRun, t2])).id, null, "чужой прогон не может взять фикстуру");
+assert.equal((await one(`select * from worker_claim_fixture_by_id($1, $2, $3)`, [depFx, mobRun, t2])).id, depFx);
+assert.equal((await one(`select * from worker_claim_fixture_by_id($1, $2, $3)`, [depFx, mobRun, t1])).id, null, "занятая фикстура не выдаётся второй раз");
+await db.exec(`set role authenticated`);
+await as(admin);
+await expectError(`select worker_claim_fixture_by_id(gen_random_uuid(), gen_random_uuid(), gen_random_uuid())`, /permission denied/);
+await expectError(`select worker_claim_run('x', array['web']::stand_platform[])`, /permission denied/);
+await db.exec(`reset role`);
+await as(null);
+console.log("✓ передача фикстур между тестами одного прогона");
+
 console.log("\nВсе проверки миграций прошли.");

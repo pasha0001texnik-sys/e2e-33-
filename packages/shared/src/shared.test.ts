@@ -98,3 +98,22 @@ test("подпись вебхука", () => {
   assert.equal(verifyWebhook({ secret: "k", timestamp: String(ts), signature: sig, body: '{"a":2}', now: ts }).ok, false);
   assert.equal(verifyWebhook({ secret: "k", timestamp: String(ts), signature: sig, body: '{"a":1}', now: ts + 1000 }).ok, false);
 });
+
+test("traceparent из trace_id", async () => {
+  const { traceparent, traceHeaders } = await import("./trace.ts");
+  const tp = traceparent("9F2C1A7E-0d3b-4a51-9c11-3f7e2b8a6d01");
+  assert.match(tp, /^00-9f2c1a7e0d3b4a519c113f7e2b8a6d01-[0-9a-f]{16}-01$/);
+  assert.notEqual(tp, traceparent("9f2c1a7e-0d3b-4a51-9c11-3f7e2b8a6d01"), "новый span на каждый вызов");
+  assert.throws(() => traceparent("bad"));
+  assert.deepEqual(Object.keys(traceHeaders({ traceId: "t", runId: "r" })), ["x-e2e-trace-id", "x-e2e-run-id"]);
+});
+
+test("зависимости сценариев раскрываются транзитивно и без циклов", async () => {
+  const { withDependencies, SCENARIO_CATALOG } = await import("./scenarios.ts");
+  assert.deepEqual(withDependencies(["login.after-onboarding"]), ["signup.verify-email", "onboarding.profile", "login.after-onboarding"]);
+  assert.deepEqual(withDependencies(["signup.email", "onboarding.profile"]), ["signup.email", "signup.verify-email", "onboarding.profile"]);
+  const all = withDependencies(SCENARIO_CATALOG.map((s) => s.key));
+  assert.equal(all.length, SCENARIO_CATALOG.length);
+  const cyc = new Map([["a", { dependsOn: ["b"] }], ["b", { dependsOn: ["a"] }]]);
+  assert.throws(() => withDependencies(["a"], (k) => cyc.get(k)), /Циклическая/);
+});

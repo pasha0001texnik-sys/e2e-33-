@@ -1,32 +1,39 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import {
   CancelledError,
   classifyError,
   finalRunStatus,
-  GuardError,
   isRetryable,
+  maskSecrets,
   summarize,
+  traceHeaders,
+  withDependencies,
   type ErrorKind,
   type HoldAction,
-  type NetworkError,
   type Run,
   type RunTest,
   type Stand,
   type Suite,
   type TestStatus,
 } from "@e2e/shared";
-import { chromium, type Browser, type BrowserContext, type Page } from "@playwright/test";
+import { chromium, type Browser } from "@playwright/test";
 import { Artifacts } from "./artifacts.ts";
 import type { Config } from "./config.ts";
 import { must, type Db } from "./db.ts";
 import { FixtureService } from "./fixtures.ts";
 import { RunLogger } from "./logger.ts";
 import { Mailbox } from "./mail.ts";
-import { installNetworkGuards, preflight, type GuardState } from "./preflight.ts";
+import { preflight } from "./preflight.ts";
+import { DependencyQueue } from "./queue.ts";
 import { getScenario } from "./scenarios/index.ts";
-import type { ScenarioContext, StandFlags, StepOptions } from "./scenarios/types.ts";
+import {
+  supportsPlatform,
+  type BaseContext,
+  type MobileScenarioContext,
+  type ScenarioContext,
+  type StandFlags,
+  type StepOptions,
+} from "./scenarios/types.ts";
+import { openMobileSession, openWebSession, type TestSession } from "./session.ts";
 
 export interface RunnerDeps {
   db: Db;
@@ -47,6 +54,8 @@ class TestTimeoutError extends Error {
     this.name = "TimeoutError";
   }
 }
+
+const PASSED: TestStatus[] = ["passed", "flaky"];
 
 /** Флаги отмены/паузы, которые воркер получает из БД вместе с heartbeat. */
 class RunControl {
@@ -89,6 +98,9 @@ class RunControl {
   }
 }
 
+/** Данные, которые тесты передают зависимым (ключ сценария → значения). */
+type SharedOutputs = Map<string, Record<string, string | number | boolean | null>>;
+
 export async function executeRun(run: Run, deps: RunnerDeps): Promise<void> {
   const { db, cfg } = deps;
   const log = new RunLogger(db, run.id, run.trace_id);
@@ -109,27 +121,52 @@ export async function executeRun(run: Run, deps: RunnerDeps): Promise<void> {
     const secrets = Object.fromEntries(secretRows.map((s) => [s.name, s.value]));
     log.addSecret(...Object.values(secrets));
 
-    log.write("info", `Прогон #${run.number}: сюит «${suite.name}» на стенде ${stand.slug}, сборка ${run.build_tag}`, {
-      parallelism: run.parallelism,
-      worker: cfg.WORKER_ID,
-    });
+    log.write(
+      "info",
+      `Прогон #${run.number}: сюит «${suite.name}» на стенде ${stand.slug} (${stand.platform}), сборка ${run.build_tag}`,
+      { parallelism: run.parallelism, worker: cfg.WORKER_ID },
+    );
 
-    // Тесты прогона
-    const keys = run.only_scenarios?.length ? run.only_scenarios : suite.scenario_keys;
-    const rows = keys.map((key) => ({
-      run_id: run.id,
-      scenario_key: key,
-      name: getScenario(key)?.name ?? key,
-      max_attempts: run.max_retries + 1,
-      status: getScenario(key) ? ("queued" as const) : ("skipped" as const),
-      error: getScenario(key) ? null : "Сценарий не найден в реестре воркера",
-    }));
+    // Тесты прогона вместе с зависимостями (перезапуск упавших подтягивает и их «поставщиков»)
+    const requested = run.only_scenarios?.length ? run.only_scenarios : suite.scenario_keys;
+    let keys: string[];
+    try {
+      keys = withDependencies(requested, (k) => {
+        const s = getScenario(k);
+        return s ? { dependsOn: s.dependsOn ?? [] } : undefined;
+      });
+    } catch (e) {
+      log.write("error", (e as Error).message);
+      await finishRun(db, run, "error", (e as Error).message);
+      return;
+    }
+    const added = keys.filter((k) => !requested.includes(k));
+    if (added.length) log.write("info", `Добавлены зависимости: ${added.join(", ")}`);
+
+    const rows = keys.map((key) => {
+      const s = getScenario(key);
+      const reason = !s
+        ? "Сценарий не найден в реестре воркера"
+        : !supportsPlatform(s, stand.platform)
+          ? `У сценария нет реализации для платформы ${stand.platform}`
+          : null;
+      return {
+        run_id: run.id,
+        scenario_key: key,
+        name: s?.name ?? key,
+        max_attempts: run.max_retries + 1,
+        depends_on: s?.dependsOn ?? [],
+        status: reason ? ("skipped" as const) : ("queued" as const),
+        error: reason,
+      };
+    });
     const tests = must(
       await db.from("run_tests").upsert(rows, { onConflict: "run_id,scenario_key" }).select("*"),
       "run_tests",
     ) as RunTest[];
+    tests.sort((a, b) => keys.indexOf(a.scenario_key) - keys.indexOf(b.scenario_key));
 
-    // Проверки безопасности до запуска браузера
+    // Проверки безопасности до запуска браузера/эмулятора
     try {
       const pf = await preflight(stand, run, forbidden, cfg.HEALTH_TIMEOUT_MS);
       for (const w of pf.warnings) log.write("warn", w);
@@ -146,24 +183,53 @@ export async function executeRun(run: Run, deps: RunnerDeps): Promise<void> {
       return;
     }
 
-    browser = await chromium.launch({ headless: cfg.HEADLESS, executablePath: cfg.BROWSER_EXECUTABLE_PATH });
-    const queue = tests.filter((t) => t.status === "queued");
+    if (stand.platform === "web") {
+      browser = await chromium.launch({ headless: cfg.HEADLESS, executablePath: cfg.BROWSER_EXECUTABLE_PATH });
+    }
     const flags = stand.test_flags as StandFlags;
-    const mailbox = new Mailbox(stand, secrets.mailbox_token);
+    const mailbox = new Mailbox(stand, secrets.mailbox_token, traceHeaders({ traceId: run.trace_id, runId: run.id }));
+    const outputs: SharedOutputs = new Map();
 
-    const workers = Array.from({ length: Math.max(1, run.parallelism) }, async () => {
+    // Очерёдность: тест стартует, когда все его зависимости прошли
+    const queue = new DependencyQueue(
+      tests.filter((t) => t.status === "queued"),
+      tests.filter((t) => t.status !== "queued").map((t) => [t.scenario_key, t.status] as [string, TestStatus]),
+    );
+    let running = 0;
+
+    const pool = Array.from({ length: Math.max(1, run.parallelism) }, async () => {
       for (;;) {
         while (control.paused && !control.cancelled) await sleep(1000);
-        const test = queue.shift();
-        if (!test) return;
+        const next = queue.next(running, control.cancelled);
+        if (next.kind === "done") return;
+        if (next.kind === "wait") {
+          await sleep(300);
+          continue;
+        }
+        const test = next.item;
+        if (next.kind === "skip") {
+          await db.from("run_tests").update({ status: "skipped", error: next.reason, finished_at: now() }).eq("id", test.id);
+          log.for(test.id).warn(next.reason);
+          continue;
+        }
         if (control.cancelled) {
+          queue.complete(test.scenario_key, "cancelled");
           await db.from("run_tests").update({ status: "cancelled", finished_at: now() }).eq("id", test.id);
           continue;
         }
-        await executeTest({ run, stand, suite, test, browser: browser!, secrets, flags, mailbox, control, log, deps });
+        running++;
+        try {
+          const status = await executeTest({ run, stand, suite, test, browser, secrets, flags, mailbox, control, log, deps, outputs });
+          queue.complete(test.scenario_key, status);
+        } catch (e) {
+          queue.complete(test.scenario_key, "failed");
+          throw e;
+        } finally {
+          running--;
+        }
       }
     });
-    await Promise.all(workers);
+    await Promise.all(pool);
 
     // Фикстуры прогона: по умолчанию — в очередь на очистку
     if (!flags.keep_fixtures) {
@@ -205,17 +271,18 @@ interface TestArgs {
   stand: Stand;
   suite: Suite;
   test: RunTest;
-  browser: Browser;
+  browser?: Browser;
   secrets: Record<string, string>;
   flags: StandFlags;
   mailbox: Mailbox;
   control: RunControl;
   log: RunLogger;
   deps: RunnerDeps;
+  outputs: SharedOutputs;
 }
 
-async function executeTest(a: TestArgs) {
-  const { run, stand, suite, test, browser, control, log, deps } = a;
+async function executeTest(a: TestArgs): Promise<TestStatus> {
+  const { run, stand, suite, test, control, log, deps, outputs } = a;
   const { db, cfg, artifacts } = deps;
   const scenario = getScenario(test.scenario_key)!;
   const tlog = log.for(test.id);
@@ -236,44 +303,50 @@ async function executeTest(a: TestArgs) {
       .update({ status: "running", attempt, started_at: attempt === 1 ? now() : undefined, error: null, error_kind: null })
       .eq("id", test.id);
     tlog.info(`▶ ${scenario.name} (попытка ${attempt}/${test.max_attempts})`);
+    outputs.delete(test.scenario_key); // каждая попытка передаёт данные заново
 
-    // Чистый контекст на каждую попытку: без кэша, cookies и storage
-    const context = await browser.newContext({
-      baseURL: stand.base_url,
-      locale: "ru-RU",
-      viewport: { width: 1366, height: 900 },
-      ignoreHTTPSErrors: a.flags.ignore_https_errors === true,
-      serviceWorkers: "block", // иначе запросы SW обходят сетевой guard
-    });
-    const guard = await installNetworkGuards(context, stand, (host) =>
-      tlog.warn(`Заблокирован запрос к хосту вне allowlist: ${host}`),
-    );
-    const tracing = cfg.TRACE_MODE !== "off";
-    if (tracing) await context.tracing.start({ screenshots: true, snapshots: true });
-    const page = await context.newPage();
-
-    const holdState = { holding: false };
-    const fixtures = new FixtureService(db, stand, run, test.id, log, claimed);
-    const stepper = new Stepper({ ...a, page, attempt, holdState, guard });
-    const ctx: ScenarioContext = {
-      page,
-      context,
-      stand,
-      run,
-      test,
-      attempt,
-      secrets: a.secrets,
-      flags: a.flags,
-      fixtures,
-      mail: a.mailbox,
-      step: (name, fn, opts) => stepper.step(name, fn, opts),
-      log: (m, d) => tlog.info(m, d),
-    };
-
+    let session: TestSession | undefined;
     let ok = false;
+    const holdState = { holding: false };
     try {
-      await withTestTimeout(scenario.run(ctx), suite.test_timeout_sec, holdState, control);
-      assertNoViolations(guard);
+      session =
+        stand.platform === "web"
+          ? await openWebSession({ browser: a.browser!, stand, run, test, flags: a.flags, cfg, log })
+          : await openMobileSession({ stand, test, log });
+
+      const fixtures = new FixtureService(db, stand, run, test.id, log, claimed);
+      const stepper = new Stepper({ ...a, session, attempt, holdState });
+      const base: BaseContext = {
+        stand,
+        run,
+        test,
+        attempt,
+        secrets: a.secrets,
+        flags: a.flags,
+        fixtures,
+        mail: a.mailbox,
+        step: (name, fn, opts) => stepper.step(name, fn, opts),
+        log: (m, d) => tlog.info(m, d),
+        share: (key, value) => {
+          if (value !== null && !["string", "number", "boolean"].includes(typeof value)) {
+            throw new Error(`share("${key}"): можно передавать только строки, числа и boolean`);
+          }
+          outputs.set(test.scenario_key, { ...(outputs.get(test.scenario_key) ?? {}), [key]: value });
+        },
+        fromDependency: <T,>(dep: string, key: string) => {
+          if (!test.depends_on.includes(dep)) {
+            throw new Error(`Сценарий ${test.scenario_key} читает данные «${dep}», но не объявил его в dependsOn`);
+          }
+          return outputs.get(dep)?.[key] as T | undefined;
+        },
+      };
+
+      const body =
+        session.kind === "web"
+          ? scenario.run!({ ...base, page: session.web!.page, context: session.web!.context } as ScenarioContext)
+          : scenario.runMobile!({ ...base, driver: session.mobile!.driver, platform: session.mobile!.platform } as MobileScenarioContext);
+      await withTestTimeout(body, suite.test_timeout_sec, holdState, control);
+      session.assertSafe();
       ok = true;
     } catch (e) {
       lastKind = e instanceof HoldFailedError ? "assertion" : classifyError(e);
@@ -282,20 +355,9 @@ async function executeTest(a: TestArgs) {
     }
 
     // Трейс сохраняем при падении/flaky (или всегда в режиме "on")
-    const keepTrace = tracing && (cfg.TRACE_MODE === "on" || !ok || attempt > 1);
-    if (tracing) {
-      if (keepTrace) {
-        const dir = await mkdtemp(join(tmpdir(), "trace-"));
-        const file = join(dir, "trace.zip");
-        await context.tracing.stop({ path: file }).catch(() => {});
-        const buf = await readFile(file).catch(() => null);
-        if (buf) tracePath = await artifacts.upload(Artifacts.path(run.id, test.id, attempt, "trace.zip"), buf, "application/zip");
-        await rm(dir, { recursive: true, force: true });
-      } else {
-        await context.tracing.stop().catch(() => {});
-      }
-    }
-    await context.close().catch(() => {});
+    const keepTrace = cfg.TRACE_MODE === "on" || (cfg.TRACE_MODE === "on-failure" && (!ok || attempt > 1));
+    const trace = session ? await session.close(keepTrace) : null;
+    if (trace) tracePath = await artifacts.upload(Artifacts.path(run.id, test.id, attempt, "trace.zip"), trace, "application/zip");
 
     if (ok) {
       finalStatus = attempt > 1 ? "flaky" : "passed";
@@ -318,6 +380,9 @@ async function executeTest(a: TestArgs) {
 
   if (finalStatus === "flaky") tlog.warn("Тест прошёл не с первой попытки — помечен как flaky");
   if (finalStatus === "passed" || finalStatus === "flaky") tlog.info(`✓ ${scenario.name}`);
+  const ok = PASSED.includes(finalStatus);
+  const shared = ok ? (outputs.get(test.scenario_key) ?? {}) : {};
+  if (!ok) outputs.delete(test.scenario_key);
 
   await db
     .from("run_tests")
@@ -328,13 +393,13 @@ async function executeTest(a: TestArgs) {
       error_kind: lastKind,
       duration_ms: Date.now() - started,
       trace_path: tracePath,
+      outputs: maskSecrets(shared),
       finished_at: now(),
       hold_requested: false,
     })
     .eq("id", test.id);
 
-  // Взятые из реестра фикстуры: после успешного теста возвращаем в пул, иначе — на очистку
-  const ok = finalStatus === "passed" || finalStatus === "flaky";
+  // Взятые фикстуры: после успешного теста возвращаем в пул, иначе — на очистку
   if (claimed.length) {
     await db
       .from("fixtures")
@@ -347,31 +412,17 @@ async function executeTest(a: TestArgs) {
   // Промежуточная сводка — список прогонов показывает прогресс, не дожидаясь конца
   const { data: all } = await db.from("run_tests").select("status, duration_ms").eq("run_id", run.id);
   if (all) await db.from("runs").update({ summary: summarize(all as { status: TestStatus; duration_ms: number | null }[]) }).eq("id", run.id);
+  return finalStatus;
 }
 
 /** Шаги сценария: запись в run_steps, артефакты при падении, manual_hold. */
 class Stepper {
   private idx = 0;
-  private netErrors: NetworkError[] = [];
 
-  constructor(
-    private a: TestArgs & { page: Page; attempt: number; holdState: { holding: boolean }; guard: GuardState },
-  ) {
-    const { page, log } = a;
-    page.on("requestfailed", (req) => {
-      const failure = req.failure()?.errorText ?? "failed";
-      if (failure.includes("ERR_BLOCKED_BY_CLIENT")) return;
-      this.netErrors.push({ url: log.redact(req.url()).slice(0, 500), method: req.method(), failure });
-    });
-    page.on("response", (res) => {
-      if (res.status() >= 500) {
-        this.netErrors.push({ url: log.redact(res.url()).slice(0, 500), method: res.request().method(), status: res.status() });
-      }
-    });
-  }
+  constructor(private a: TestArgs & { session: TestSession; attempt: number; holdState: { holding: boolean } }) {}
 
   async step<T>(name: string, fn: () => Promise<T>, opts: StepOptions = {}): Promise<T> {
-    const { run, test, deps, control, log, attempt } = this.a;
+    const { run, test, deps, control, log, attempt, session } = this.a;
     const { db } = deps;
     const tlog = log.for(test.id);
     if (control.cancelled) throw new CancelledError();
@@ -385,7 +436,7 @@ class Stepper {
     }
 
     const idx = ++this.idx;
-    this.netErrors = [];
+    session.netErrors.length = 0;
     const row = must(
       await db
         .from("run_steps")
@@ -400,8 +451,8 @@ class Stepper {
 
     try {
       const result = await exec();
-      assertNoViolations(this.a.guard);
-      await db.from("run_steps").update({ status: "passed", finished_at: now(), network_errors: this.netErrors }).eq("id", row.id);
+      session.assertSafe();
+      await db.from("run_steps").update({ status: "passed", finished_at: now(), network_errors: [...session.netErrors] }).eq("id", row.id);
       return result;
     } catch (err) {
       let error = err as Error;
@@ -412,7 +463,7 @@ class Stepper {
       if (run.hold_on_failure && kind !== "cancelled" && kind !== "guard") {
         await db
           .from("run_steps")
-          .update({ error: log.redact(error.message).slice(0, 4000), ...shots, network_errors: this.netErrors })
+          .update({ error: log.redact(error.message).slice(0, 4000), ...shots, network_errors: [...session.netErrors] })
           .eq("id", row.id);
         const action = await this.hold(`${name} (после ошибки)`);
         if (action === "continue") {
@@ -436,7 +487,7 @@ class Stepper {
           status: "failed",
           finished_at: now(),
           error: log.redact(error.message ?? String(error)).slice(0, 4000),
-          network_errors: this.netErrors,
+          network_errors: [...session.netErrors],
           ...shots,
         })
         .eq("id", row.id);
@@ -444,29 +495,28 @@ class Stepper {
     }
   }
 
-  /** Скриншот (поля паролей замаскированы) и DOM (известные секреты вырезаны). */
+  /** Скриншот (поля паролей замаскированы) и DOM / дерево экрана (известные секреты вырезаны). */
   private async capture(name: string): Promise<{ screenshot_path?: string; dom_path?: string }> {
-    const { page, run, test, attempt, log, deps } = this.a;
+    const { run, test, attempt, deps, session } = this.a;
     const out: { screenshot_path?: string; dom_path?: string } = {};
-    try {
-      const png = await page.screenshot({ fullPage: true, mask: [page.locator('input[type="password"]')], timeout: 10000 });
-      const p = await deps.artifacts.upload(Artifacts.path(run.id, test.id, attempt, `${name}.png`), png, "image/png");
+    const c = await session.capture();
+    if (c.png) {
+      const p = await deps.artifacts.upload(Artifacts.path(run.id, test.id, attempt, `${name}.png`), c.png, "image/png");
       if (p) out.screenshot_path = p;
-    } catch {
-      /* страница могла закрыться */
     }
-    try {
-      const html = log.redact(await page.content());
-      const p = await deps.artifacts.upload(Artifacts.path(run.id, test.id, attempt, `${name}.html`), html, "text/html");
+    if (c.source) {
+      const p = await deps.artifacts.upload(
+        Artifacts.path(run.id, test.id, attempt, `${name}.${c.source.ext}`),
+        c.source.body,
+        c.source.contentType,
+      );
       if (p) out.dom_path = p;
-    } catch {
-      /* ignore */
     }
     return out;
   }
 
   private async hold(stepName: string): Promise<HoldAction> {
-    const { run, stand, test, control, log, deps } = this.a;
+    const { stand, test, control, log, deps } = this.a;
     const { db, cfg } = deps;
     const tlog = log.for(test.id);
 
@@ -509,13 +559,6 @@ class Stepper {
     tlog.info(`manual_hold: ${action}`);
     await db.from("run_tests").update({ status: "running", hold_until: null, hold_action: null }).eq("id", test.id);
     return action;
-  }
-}
-
-/** Ответ с хоста вне allowlist — немедленный провал теста с типом guard. */
-function assertNoViolations(guard: GuardState) {
-  if (guard.violations.length) {
-    throw new GuardError(`Запрос ушёл на хост вне allowlist: ${guard.violations[0]}. Тест остановлен.`);
   }
 }
 
@@ -570,4 +613,3 @@ function withTimeout<T>(p: Promise<T>, ms: number, message: string): Promise<T> 
 
 const now = () => new Date().toISOString();
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-

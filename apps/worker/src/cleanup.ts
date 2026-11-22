@@ -3,7 +3,7 @@
 // и заголовком Authorization: Bearer <секрет стенда cleanup_token>.
 // 2xx и 404 (записи уже нет) считаются успехом — операция идемпотентна.
 
-import { isRequestAllowed, type Fixture, type Stand } from "@e2e/shared";
+import { isRequestAllowed, RUN_HEADER, type Fixture, type Stand } from "@e2e/shared";
 import type { Db } from "./db.ts";
 import { sysLog } from "./logger.ts";
 
@@ -58,7 +58,11 @@ export async function processCleanup(db: Db, limit = 25): Promise<{ cleaned: num
       const token = tokens.get(stand.id);
       const res = await fetch(stand.cleanup_api_url, {
         method: "POST",
-        headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        headers: {
+          "Content-Type": "application/json",
+          ...(fx.run_id ? { [RUN_HEADER]: fx.run_id } : {}),
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
         body: JSON.stringify({ fixture_id: fx.id, kind: fx.kind, email: fx.payload.email ?? null, run_id: fx.run_id }),
         signal: AbortSignal.timeout(15000),
         redirect: "manual", // не следуем за редиректами за пределы стенда

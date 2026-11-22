@@ -32,6 +32,6 @@ values
   ('smoke-auth', 'Smoke: регистрация и вход', 'Быстрая проверка перед выкаткой',
    array['signup.email', 'login.password'], array['smoke', 'auth'], 2, 1),
   ('onboarding-full', 'Онбординг целиком', 'Регистрация, подтверждение почты, анкета онбординга',
-   array['signup.email', 'signup.verify-email', 'onboarding.profile', 'login.password', 'login.wrong-password'],
+   array['signup.email', 'signup.verify-email', 'onboarding.profile', 'login.after-onboarding', 'login.password', 'login.wrong-password'],
    array['regression', 'onboarding'], 3, 1)
 on conflict (slug) do nothing;

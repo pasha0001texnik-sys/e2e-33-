@@ -7,6 +7,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { after, before, test } from "node:test";
 import assert from "node:assert/strict";
 import type { Run, RunTest, Stand } from "@e2e/shared";
+import { traceHeaders } from "@e2e/shared";
 import { syntheticUser } from "@e2e/shared/node";
 import { chromium, type Browser } from "@playwright/test";
 import type { FixtureService, UserFixture } from "./fixtures.ts";
@@ -14,6 +15,7 @@ import { Mailbox } from "./mail.ts";
 import { installNetworkGuards, preflight } from "./preflight.ts";
 import { nextFire } from "./scheduler.ts";
 import { getScenario } from "./scenarios/index.ts";
+import { withDependencies } from "@e2e/shared";
 import type { ScenarioContext } from "./scenarios/types.ts";
 
 // ---------------------------------------------------------------- фейковый стенд
@@ -25,9 +27,10 @@ interface Mail {
   Text: string;
   HTML: string;
 }
-const users = new Map<string, { password: string; verified: boolean }>();
+const users = new Map<string, { password: string; verified: boolean; onboarded?: boolean }>();
 const mails: Mail[] = [];
 let health = { env: "qa", build_tag: "b42" };
+const seen = new Map<string, IncomingMessage["headers"]>();
 let server: Server;
 let base = "";
 
@@ -47,6 +50,7 @@ function handler(req: IncomingMessage, res: ServerResponse) {
     res.end(html);
   };
   const json = (o: unknown) => send(200, JSON.stringify(o), "application/json");
+  seen.set(`${req.method} ${url.pathname}`, req.headers);
 
   if (url.pathname === "/health") return json(health);
   if (url.pathname === "/signup" && req.method === "GET") {
@@ -90,9 +94,26 @@ function handler(req: IncomingMessage, res: ServerResponse) {
   if (url.pathname === "/login" && req.method === "POST") {
     return void readBody(req).then((f) => {
       const u = users.get(f.get("email")!);
-      if (u?.verified && u.password === f.get("password")) return send(200, page(`<div data-testid="user-menu">Профиль</div>`));
+      if (u?.verified && u.password === f.get("password")) {
+        res.setHeader("set-cookie", `who=${encodeURIComponent(f.get("email")!)}; Path=/`);
+        const onboarding = u.onboarded ? "" : `<a href="/onboarding">Заполнить анкету</a>`;
+        return send(200, page(`<div data-testid="user-menu">Профиль</div>${onboarding}`));
+      }
       send(401, page(`<p data-testid="login-error">Неверный email или пароль</p>`));
     });
+  }
+  if (url.pathname === "/onboarding" && req.method === "GET") {
+    return send(
+      200,
+      page(`<form method="post" action="/onboarding"><input data-testid="onboarding-company" name="company">
+        <button data-testid="onboarding-finish">Готово</button></form>`),
+    );
+  }
+  if (url.pathname === "/onboarding" && req.method === "POST") {
+    const who = decodeURIComponent(/who=([^;]+)/.exec(req.headers.cookie ?? "")?.[1] ?? "");
+    const u = users.get(who);
+    if (u) u.onboarded = true;
+    return send(u ? 200 : 401, page(u ? `<p data-testid="onboarding-done">Добро пожаловать</p>` : "нет сессии"));
   }
   if (url.pathname === "/api/v1/search") {
     const to = /to:"([^"]+)"/.exec(url.searchParams.get("query") ?? "")?.[1];
@@ -134,6 +155,9 @@ before(async () => {
     mocks: { routes: [{ url: "**/api/sms/send", json: { ok: true, mocked: true } }] },
     test_flags: {},
     is_active: true,
+    platform: "web",
+    appium_url: null,
+    capabilities: {},
     created_at: "",
     updated_at: "",
   };
@@ -145,7 +169,7 @@ after(async () => {
   server.close();
 });
 
-const run = { id: "8f14e45f-ceea-467a-9575-1b2b0c8f2a11", build_tag: "b42" } as Run;
+const run = { id: "8f14e45f-ceea-467a-9575-1b2b0c8f2a11", trace_id: "1b4e28ba-2fa1-41d2-883f-0016d3cca427", build_tag: "b42" } as Run;
 
 // ---------------------------------------------------------------- тесты
 test("планировщик: следующий запуск по cron в часовом поясе", () => {
@@ -207,10 +231,14 @@ test("сценарии регистрации, подтверждения поч
     async markVerified(id: string) {
       verified.add(id);
     },
+    async adopt(id: string) {
+      return created.find((c) => c.id === id) ?? null;
+    },
     async markFailed() {},
   } as unknown as FixtureService;
 
   const steps: string[] = [];
+  const shared = new Map<string, Record<string, unknown>>();
   const makeCtx = async (key: string) => {
     const context = await browser!.newContext({ baseURL: base, serviceWorkers: "block" });
     await installNetworkGuards(context, stand, () => {});
@@ -230,16 +258,28 @@ test("сценарии регистрации, подтверждения поч
         return fn();
       },
       log: () => {},
+      share: (k, v) => shared.set(key, { ...(shared.get(key) ?? {}), [k]: v }),
+      fromDependency: <T,>(dep: string, k: string) => {
+        assert.ok(getScenario(key)!.dependsOn?.includes(dep), `${key} не объявил зависимость ${dep}`);
+        return shared.get(dep)?.[k] as T | undefined;
+      },
     };
     return ctx;
   };
 
-  for (const key of ["signup.verify-email", "login.password", "login.wrong-password"]) {
+  for (const key of withDependencies(["login.password", "login.wrong-password", "login.after-onboarding"], (k) => ({ dependsOn: getScenario(k)?.dependsOn ?? [] }))) {
     const ctx = await makeCtx(key);
-    await getScenario(key)!.run(ctx);
+    await getScenario(key)!.run!(ctx);
     await ctx.context.close();
   }
-  assert.equal(created.length, 1, "вход переиспользует подтверждённого пользователя из реестра");
+  // login.password без зависимостей создаёт своего пользователя (fx-1), wrong-password берёт его из реестра;
+  // цепочка signup.verify-email → onboarding.profile → login.after-onboarding идёт на одном пользователе (fx-2)
+  assert.equal(created.length, 2, "цепочка не создаёт лишних пользователей");
+  const chainUser = shared.get("signup.verify-email")?.user;
+  assert.equal(chainUser, "fx-2");
+  assert.equal(shared.get("onboarding.profile")?.user, chainUser, "онбординг передал того же пользователя дальше");
+  assert.ok(users.get(created.find((c) => c.id === chainUser)!.email)?.onboarded, "онбординг пройден на стенде");
+  assert.ok(steps.includes("login.after-onboarding: Онбординг не показывается повторно"));
   assert.ok(verified.has("fx-1"));
   assert.ok(steps.includes("login.password: Проверить, что пользователь вошёл"));
   assert.ok(steps.includes("login.wrong-password: Проверить сообщение об ошибке"));
@@ -248,10 +288,9 @@ test("сценарии регистрации, подтверждения поч
 test("каталог сценариев в shared совпадает с реестром воркера", async () => {
   const { SCENARIO_CATALOG } = await import("@e2e/shared");
   const { listScenarios } = await import("./scenarios/index.ts");
-  assert.deepEqual(
-    SCENARIO_CATALOG.map((s) => s.key).sort(),
-    listScenarios().map((s) => s.key).sort(),
-  );
+  const norm = (l: { key: string; name: string; dependsOn: string[]; platforms: string[] }[]) =>
+    l.map(({ key, name, dependsOn, platforms }) => ({ key, name, dependsOn, platforms: [...platforms].sort() })).sort((a, b) => a.key.localeCompare(b.key));
+  assert.deepEqual(norm(SCENARIO_CATALOG), norm(listScenarios()));
 });
 
 test("сетевой guard: редирект со стенда на чужой хост не проходит", { skip: !hasChrome && "нет Chrome", timeout: 30000 }, async () => {
@@ -280,7 +319,10 @@ test("сетевой guard: редирект со стенда на чужой �
   const context = await browser!.newContext({ baseURL: rbase, serviceWorkers: "block" });
   try {
     const blocked: string[] = [];
-    const guard = await installNetworkGuards(context, stand, (h) => blocked.push(h));
+    const guard = await installNetworkGuards(context, stand, (h) => blocked.push(h), {
+      traceId: run.id,
+      headers: traceHeaders({ traceId: run.id, runId: run.id }),
+    });
     const p = await context.newPage();
     await assert.rejects(p.goto("/go"), /ERR_BLOCKED_BY_CLIENT/);
     const p2 = await context.newPage();
@@ -297,5 +339,35 @@ test("сетевой guard: редирект со стенда на чужой �
     outside.closeAllConnections();
     redirector.close();
     outside.close();
+  }
+});
+
+test("trace_id доходит до стенда в заголовках, формы и тела запросов не ломаются", { skip: !hasChrome && "нет Chrome", timeout: 30000 }, async () => {
+  const traceId = "9f2c1a7e-0d3b-4a51-9c11-3f7e2b8a6d01";
+  const context = await browser!.newContext({ baseURL: base, serviceWorkers: "block" });
+  try {
+    await installNetworkGuards(context, stand, () => {}, {
+      traceId,
+      headers: traceHeaders({ traceId, runId: run.id, testId: "t-1" }),
+    });
+    const p = await context.newPage();
+    await p.goto("/signup");
+    await p.locator('[data-testid="signup-email"]').fill("trace@mail.qa.example.test");
+    await p.locator('[data-testid="signup-password"]').fill("Secret-123456");
+    await p.locator('[data-testid="signup-submit"]').click();
+    await p.locator('[data-testid="signup-done"]').waitFor();
+    await p.evaluate(() => fetch("/health").then((r) => r.text()));
+
+    for (const key of ["GET /signup", "POST /signup", "GET /health"]) {
+      const h = seen.get(key);
+      assert.ok(h, `нет запроса ${key}`);
+      assert.equal(h["x-e2e-trace-id"], traceId, key);
+      assert.equal(h["x-e2e-run-id"], run.id, key);
+      assert.equal(h["x-e2e-test-id"], "t-1", key);
+      assert.match(String(h.traceparent), /^00-9f2c1a7e0d3b4a519c113f7e2b8a6d01-[0-9a-f]{16}-01$/, key);
+    }
+    assert.ok(users.has("trace@mail.qa.example.test"), "тело POST-формы дошло до стенда");
+  } finally {
+    await context.close();
   }
 });

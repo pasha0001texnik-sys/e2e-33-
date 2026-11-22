@@ -250,7 +250,10 @@ function TestCard({ test, steps, canOperate, now }: { test: RunTest; steps: RunS
         <StatusBadge status={test.status} />
         <div className="min-w-0 flex-1">
           <div className="truncate text-sm font-medium">{test.name}</div>
-          <div className="font-mono text-xs text-ink-3">{test.scenario_key}</div>
+          <div className="font-mono text-xs text-ink-3">
+            {test.scenario_key}
+            {test.depends_on?.length > 0 && <span className="font-sans"> · после {test.depends_on.join(", ")}</span>}
+          </div>
         </div>
         <div className="text-right text-xs text-ink-3">
           {test.max_attempts > 1 && (
@@ -297,6 +300,17 @@ function TestCard({ test, steps, canOperate, now }: { test: RunTest; steps: RunS
                   </Button>
                 </div>
               )}
+            </div>
+          )}
+
+          {test.outputs && Object.keys(test.outputs).length > 0 && (
+            <div className="text-xs text-ink-3">
+              Передал зависимым тестам:{" "}
+              {Object.entries(test.outputs).map(([k, v]) => (
+                <Mono key={k} className="mr-2 text-ink-2">
+                  {k}={String(v)}
+                </Mono>
+              ))}
             </div>
           )}
 

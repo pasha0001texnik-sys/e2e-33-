@@ -1,5 +1,7 @@
 import {
   assertEnvMarker,
+  traceHeaders,
+  traceparent,
   assertStandSafe,
   GuardError,
   InfraError,
@@ -36,7 +38,11 @@ export async function preflight(
 
   let body: string;
   try {
-    const res = await fetch(stand.health_url, { signal: AbortSignal.timeout(timeoutMs), redirect: "manual" });
+    const res = await fetch(stand.health_url, {
+      signal: AbortSignal.timeout(timeoutMs),
+      redirect: "manual",
+      headers: { ...traceHeaders({ traceId: run.trace_id, runId: run.id }), traceparent: traceparent(run.trace_id) },
+    });
     if (res.status >= 300 && res.status < 400) {
       const loc = new URL(res.headers.get("location") ?? "", stand.health_url).toString();
       if (!isRequestAllowed(loc, stand.allowed_hosts)) {
@@ -100,6 +106,8 @@ export async function installNetworkGuards(
   context: BrowserContext,
   stand: Pick<Stand, "allowed_hosts" | "rps_limit" | "mocks">,
   onBlocked: (url: string) => void,
+  /** Заголовки трассировки для стенда (X-E2E-Trace-Id и т.п.); добавляются на сетевом уровне, без CORS-preflight. */
+  trace?: { headers: Record<string, string>; traceId: string },
 ): Promise<GuardState> {
   const state: GuardState = { violations: [] };
   const blockedHosts = new Set<string>();
@@ -143,11 +151,13 @@ export async function installNetworkGuards(
         await new Promise((r) => setTimeout(r, Math.max(0, 1000 - (Date.now() - windowStart))));
       }
     }
-    if (STREAMING.has(req.resourceType()) || /^(data|blob|about):/.test(url)) return route.fallback();
+    if (/^(data|blob|about):/.test(url)) return route.fallback();
+    const headers = withTrace(req.headers(), trace);
+    if (STREAMING.has(req.resourceType())) return route.fallback(headers ? { headers } : undefined);
 
     let response;
     try {
-      response = await route.fetch({ maxRedirects: 0 });
+      response = await route.fetch({ maxRedirects: 0, ...(headers ? { headers } : {}) });
     } catch {
       return route.abort("failed");
     }
@@ -178,4 +188,15 @@ export async function installNetworkGuards(
     });
   }
   return state;
+}
+
+/** Добавляет заголовки трассировки; traceparent не трогаем, если его уже поставило приложение. */
+function withTrace(
+  base: Record<string, string>,
+  trace?: { headers: Record<string, string>; traceId: string },
+): Record<string, string> | undefined {
+  if (!trace) return undefined;
+  const out = { ...base, ...trace.headers };
+  if (!Object.keys(base).some((k) => k.toLowerCase() === "traceparent")) out.traceparent = traceparent(trace.traceId);
+  return out;
 }

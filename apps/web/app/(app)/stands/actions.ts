@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
-import { assertStandSafe, GuardError, STAND_ENVS } from "@e2e/shared";
+import { assertStandSafe, GuardError, PLATFORMS, STAND_ENVS } from "@e2e/shared";
 import type { ActionState } from "@/components/forms";
 import { requireRole } from "@/lib/auth";
 import { errText } from "@/lib/format";
@@ -34,6 +34,9 @@ const standSchema = z.object({
   slug: z.string().trim().regex(/^[a-z0-9][a-z0-9-]{1,40}$/, "slug: латиница в нижнем регистре, цифры и дефис"),
   name: z.string().trim().min(1, "Укажите название"),
   env: z.enum(STAND_ENVS),
+  platform: z.enum(PLATFORMS),
+  appium_url: optUrl,
+  capabilities: jsonObj("Capabilities"),
   base_url: z.string().trim().url("Некорректный базовый URL"),
   allowed_hosts: z
     .string()
@@ -78,6 +81,12 @@ export async function saveStand(_: ActionState, data: FormData): Promise<ActionS
           ? { tz: quiet_tz || "Europe/Moscow", from: quiet_from, to: quiet_to, ...(quiet_days.length ? { days: quiet_days } : {}) }
           : null,
     };
+
+    if (stand.platform !== "web" && !stand.appium_url) return { error: "Для мобильного стенда укажите адрес Appium-сервера" };
+    if (stand.platform === "web") {
+      stand.appium_url = null;
+      stand.capabilities = {};
+    }
 
     const { data: forbidden } = await supabase.from("forbidden_hosts").select("pattern");
     try {

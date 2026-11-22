@@ -12,6 +12,12 @@ const schema = z.object({
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(20),
   WORKER_ID: z.string().default(`${hostname()}-${process.pid}`),
   WORKER_MAX_RUNS: z.coerce.number().int().min(1).max(20).default(1),
+  /** Какие стенды обслуживает воркер: web (Playwright) и/или android, ios (Appium) */
+  WORKER_PLATFORMS: z
+    .string()
+    .default("web")
+    .transform((v) => [...new Set(v.split(/[\s,]+/).map((x) => x.trim().toLowerCase()).filter(Boolean))])
+    .pipe(z.array(z.enum(["web", "android", "ios"])).min(1, "WORKER_PLATFORMS: укажите web, android или ios")),
   POLL_INTERVAL_MS: z.coerce.number().int().min(500).default(3000),
   HEARTBEAT_INTERVAL_MS: z.coerce.number().int().min(1000).default(15000),
   HEADLESS: bool(true),

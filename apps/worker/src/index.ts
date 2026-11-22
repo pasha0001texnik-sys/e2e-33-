@@ -22,7 +22,7 @@ let stopping = false;
 const active = new Set<Promise<void>>();
 
 async function claim(): Promise<Run | null> {
-  const { data, error } = await db.rpc("worker_claim_run", { p_worker: cfg.WORKER_ID });
+  const { data, error } = await db.rpc("worker_claim_run", { p_worker: cfg.WORKER_ID, p_platforms: cfg.WORKER_PLATFORMS });
   if (error) {
     sysLog.error("claim failed", { error: error.message });
     return null;
@@ -63,7 +63,7 @@ function every(ms: number, name: string, fn: () => Promise<unknown>) {
 }
 
 async function main() {
-  sysLog.info("worker started", { worker_id: cfg.WORKER_ID, max_runs: cfg.WORKER_MAX_RUNS });
+  sysLog.info("worker started", { worker_id: cfg.WORKER_ID, max_runs: cfg.WORKER_MAX_RUNS, platforms: cfg.WORKER_PLATFORMS });
   if (cfg.ENABLE_SCHEDULER) every(30_000, "scheduler", () => tickScheduler(db));
   if (cfg.ENABLE_JANITOR) {
     every(60_000, "janitor", async () => {

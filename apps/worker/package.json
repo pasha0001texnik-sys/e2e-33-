@@ -11,9 +11,10 @@
     "test": "node --import tsx --test src/**/*.test.ts"
   },
   "dependencies": {
+    "@playwright/test": "1.65.1",
     "@supabase/supabase-js": "2.119.2",
     "cron-parser": "5.10.6",
-    "@playwright/test": "1.65.1",
+    "webdriverio": "10.2.0",
     "zod": "4.6.7"
   },
   "devDependencies": {
