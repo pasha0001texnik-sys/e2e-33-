@@ -4,7 +4,7 @@
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { GuardError, traceHeaders, type BrowserProfile, type NetworkError, type Run, type RunTest, type Stand } from "@e2e/shared";
+import { GuardError, hasEmulation, traceHeaders, type BrowserProfile, type NetProfile, type NetworkError, type Run, type RunTest, type Stand } from "@e2e/shared";
 import type { Browser, BrowserContext, Page } from "@playwright/test";
 import { remote } from "webdriverio";
 import type { Config } from "./config.ts";
@@ -42,9 +42,12 @@ export async function openWebSession(o: {
   log: RunLogger;
   /** Браузерный профиль по локали шаблона прогона: locale, timezone, UA, viewport */
   profile?: BrowserProfile;
+  /** Профиль гео-/сетевой эмуляции (координаты, разрешение geolocation, троттлинг, offline) */
+  net?: NetProfile;
 }): Promise<TestSession> {
-  const { browser, stand, run, test, flags, cfg, log, profile } = o;
+  const { browser, stand, run, test, flags, cfg, log, profile, net } = o;
   const tlog = log.for(test.id);
+  const geo = net?.geo ?? null;
   // Чистый контекст на каждую попытку: без кэша, cookies и storage
   const context = await browser.newContext({
     baseURL: stand.base_url,
@@ -54,6 +57,9 @@ export async function openWebSession(o: {
     viewport: profile?.viewport ?? { width: 1366, height: 900 },
     ignoreHTTPSErrors: flags.ignore_https_errors === true,
     serviceWorkers: "block", // иначе запросы SW обходят сетевой guard
+    // Гео-эмуляция: координаты + разрешение geolocation для страницы стенда
+    ...(geo ? { geolocation: { latitude: geo.latitude, longitude: geo.longitude, accuracy: geo.accuracy ?? 20 } } : {}),
+    ...(geo && geo.grant_geolocation !== false ? { permissions: ["geolocation"] } : {}),
   });
   const guard: GuardState = await installNetworkGuards(
     context,
@@ -64,6 +70,27 @@ export async function openWebSession(o: {
   const tracing = cfg.TRACE_MODE !== "off";
   if (tracing) await context.tracing.start({ screenshots: true, snapshots: true });
   const page = await context.newPage();
+
+  // Сетевая эмуляция: offline/троттлинг. Накладывается ПОВЕРХ перехвата запросов
+  // (installNetworkGuards) через CDP — allowlist и проверка редиректов работают как прежде.
+  const netCond = net?.network ?? null;
+  if (net && hasEmulation(net) && netCond) {
+    try {
+      if (netCond.offline) await context.setOffline(true);
+      const client = await context.newCDPSession(page);
+      await client.send("Network.enable");
+      await client.send("Network.emulateNetworkConditions", {
+        offline: netCond.offline === true,
+        downloadThroughput: netCond.download ?? -1,
+        uploadThroughput: netCond.upload ?? -1,
+        latency: netCond.latency ?? 0,
+      });
+    } catch (e) {
+      // Эмуляция сети не критична для исхода теста: логируем и продолжаем
+      tlog.warn(`Сетевая эмуляция не применена: ${(e as Error).message}`);
+    }
+  }
+  if (net && net.key !== "none") tlog.info(`Профиль эмуляции: ${net.label}`);
 
   const netErrors: NetworkError[] = [];
   page.on("requestfailed", (req) => {

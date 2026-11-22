@@ -315,4 +315,17 @@ await as(null);
 assert.equal((await one(`select exec_profile from runs where id = $1`, [epRun])).exec_profile, "human");
 console.log("✓ exec_profile: колонка и вставка профиля из формы запуска");
 
+// ------------------------------------------------------------------ net_profile (миграция 007)
+assert.equal((await one(`select count(*)::int c from information_schema.columns where table_name='runs' and column_name='net_profile'`)).c, 1, "колонка runs.net_profile есть");
+await db.exec(`set role authenticated`);
+await as(viewer); // qa
+const npRun = (await one(
+  `insert into runs (suite_id, stand_id, build_tag, created_by, trigger, status, net_profile) values ($1, $2, 'np', $3, 'manual', 'queued', 'slow-3g') returning id`,
+  [suite, qa, viewer],
+)).id;
+await db.exec(`reset role`);
+await as(null);
+assert.equal((await one(`select net_profile from runs where id = $1`, [npRun])).net_profile, "slow-3g");
+console.log("✓ net_profile: колонка и вставка профиля гео-/сетевой эмуляции из формы запуска");
+
 console.log("\nВсе проверки миграций прошли.");

@@ -8,10 +8,12 @@ import {
   withDependencies,
   getExecProfile,
   getTemplate,
+  resolveNetProfile,
   type BrowserProfile,
   type ErrorKind,
   type ExecProfile,
   type FixtureTemplate,
+  type NetProfile,
   type HoldAction,
   type Run,
   type RunTest,
@@ -198,6 +200,10 @@ export async function executeRun(run: Run, deps: RunnerDeps): Promise<void> {
     if (run.fixture_template) log.write("info", `Шаблон тестовых данных: ${template.label}`);
     const execProfile = getExecProfile(run.exec_profile);
     if (run.exec_profile) log.write("info", `Профиль выполнения: ${execProfile.label}`);
+    // Профиль гео-/сетевой эмуляции: выбор прогона переопределяет дефолт стенда (test_flags.net_profile)
+    const standNetKey = (flags as StandFlags & { net_profile?: string }).net_profile;
+    const netProfile = resolveNetProfile(run.net_profile, standNetKey);
+    if (netProfile.key !== "none") log.write("info", `Профиль эмуляции: ${netProfile.label}`);
     const mailbox = new Mailbox(stand, secrets.mailbox_token, traceHeaders({ traceId: run.trace_id, runId: run.id }));
     const outputs: SharedOutputs = new Map();
 
@@ -230,7 +236,7 @@ export async function executeRun(run: Run, deps: RunnerDeps): Promise<void> {
         }
         running++;
         try {
-          const status = await executeTest({ run, stand, suite, test, browser, secrets, flags, template, execProfile, mailbox, control, log, deps, outputs });
+          const status = await executeTest({ run, stand, suite, test, browser, secrets, flags, template, execProfile, netProfile, mailbox, control, log, deps, outputs });
           queue.complete(test.scenario_key, status);
         } catch (e) {
           queue.complete(test.scenario_key, "failed");
@@ -287,6 +293,7 @@ interface TestArgs {
   flags: StandFlags;
   template: FixtureTemplate;
   execProfile: ExecProfile;
+  netProfile: NetProfile;
   mailbox: Mailbox;
   control: RunControl;
   log: RunLogger;
@@ -327,7 +334,7 @@ async function executeTest(a: TestArgs): Promise<TestStatus> {
     try {
       session =
         stand.platform === "web"
-          ? await openWebSession({ browser: a.browser!, stand, run, test, flags: a.flags, cfg, log, profile })
+          ? await openWebSession({ browser: a.browser!, stand, run, test, flags: a.flags, cfg, log, profile, net: a.netProfile })
           : await openMobileSession({ stand, test, log });
 
       const fixtures = new FixtureService(db, stand, run, test.id, log, claimed, a.template);
@@ -456,7 +463,7 @@ async function executeTest(a: TestArgs): Promise<TestStatus> {
 
   // Артефакт результата в реестр run_results — аддитивно и изолированно: сбой записи не меняет исход теста
   try {
-    await recordResult(db, { run, stand, test, status: finalStatus, error: lastError, storageDump: ok ? storageDump : null, browserProfile: profile });
+    await recordResult(db, { run, stand, test, status: finalStatus, error: lastError, storageDump: ok ? storageDump : null, browserProfile: profile, netProfile: a.netProfile });
   } catch (e) {
     tlog.warn(`Не удалось записать результат в реестр: ${(e as Error).message}`);
   }

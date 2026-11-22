@@ -13,11 +13,14 @@ export interface ResultRow extends Pick<RunResult, "id" | "run_id" | "run_test_i
 }
 
 function profileLabel(p: NetworkProfile): string {
-  if (p.offline) return "offline";
   const parts: string[] = [];
-  if (p.download) parts.push(`${Math.round(p.download / 125)} кбит/с`);
-  if (p.latency) parts.push(`+${p.latency} мс`);
-  return parts.join(" · ") || "обычный";
+  if (p.geo) parts.push("гео");
+  if (p.offline) parts.push("offline");
+  else if (p.download) parts.push(`${Math.round(p.download / 125)} кбит/с${p.latency ? ` · +${p.latency} мс` : ""}`);
+  else if (p.latency) parts.push(`+${p.latency} мс`);
+  const cond = parts.join(" · ");
+  if (p.net_profile) return cond ? `${p.net_profile} (${cond})` : p.net_profile;
+  return cond || "обычный";
 }
 
 function Person({ f }: { f: Record<string, unknown> }) {

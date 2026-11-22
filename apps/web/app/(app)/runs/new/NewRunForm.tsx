@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { EXEC_PROFILES, FIXTURE_TEMPLATES, getExecProfile, getTemplate, LOCALE_LABEL, SCENARIO_CATALOG } from "@e2e/shared";
+import { EXEC_PROFILES, FIXTURE_TEMPLATES, getExecProfile, getNetProfile, getTemplate, LOCALE_LABEL, NET_PROFILES, SCENARIO_CATALOG } from "@e2e/shared";
 import { ActionForm, SubmitButton } from "@/components/forms";
 import { Card, Field } from "@/components/ui";
 import { createRun } from "../actions";
@@ -39,6 +39,7 @@ export function NewRunForm({
   const stand = stands.find((s) => s.id === standId);
   const [template, setTemplate] = useState(FIXTURE_TEMPLATES[0]!.key);
   const [execProfile, setExecProfile] = useState(EXEC_PROFILES[0]!.key);
+  const [netProfile, setNetProfile] = useState(NET_PROFILES[0]!.key);
   const names = useMemo(() => new Map(SCENARIO_CATALOG.map((s) => [s.key, s.name])), []);
   const deps = useMemo(() => new Map(SCENARIO_CATALOG.map((s) => [s.key, s.dependsOn])), []);
 
@@ -128,6 +129,26 @@ export function NewRunForm({
             >
               <select name="exec_profile" className="input" value={execProfile} onChange={(e) => setExecProfile(e.target.value)}>
                 {EXEC_PROFILES.map((p) => (
+                  <option key={p.key} value={p.key}>
+                    {p.label}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field
+              label="Гео- и сетевая эмуляция"
+              hint={(() => {
+                const p = getNetProfile(netProfile);
+                if (p.key === "none") return "Без эмуляции: как есть, по сети стенда";
+                const parts: string[] = [];
+                if (p.geo) parts.push(`гео ${p.geo.region ?? `${p.geo.latitude}, ${p.geo.longitude}`}`);
+                if (p.network?.offline) parts.push("offline");
+                else if (p.network?.download) parts.push(`${Math.round(p.network.download / 125)} кбит/с${p.network.latency ? ` · +${p.network.latency} мс` : ""}`);
+                return parts.join(" · ") || "эмуляция в браузере воркера";
+              })()}
+            >
+              <select name="net_profile" className="input" value={netProfile} onChange={(e) => setNetProfile(e.target.value)}>
+                {NET_PROFILES.map((p) => (
                   <option key={p.key} value={p.key}>
                     {p.label}
                   </option>

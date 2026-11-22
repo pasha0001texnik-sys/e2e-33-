@@ -14,7 +14,8 @@ const FLAGS_EXAMPLE = `{
   "selectors": { "login.submit": "button[type=submit]" },
   "password_policy": { "minLength": 12, "symbols": true },
   "mail_provider": "mailpit",
-  "keep_fixtures": false
+  "keep_fixtures": false,
+  "net_profile": "slow-3g"
 }`;
 
 const CAPS_EXAMPLE = `{
@@ -198,7 +199,7 @@ export default async function StandPage({
                 <Field label="Моки (JSON)" hint="Ответы-заглушки в браузере воркера">
                   <textarea name="mocks" rows={8} className="input font-mono text-xs" defaultValue={json(stand.mocks)} placeholder={MOCKS_EXAMPLE} />
                 </Field>
-                <Field label="Флаги (JSON)" hint="Пути, селекторы, политика паролей">
+                <Field label="Флаги (JSON)" hint="Пути, селекторы, политика паролей. net_profile — профиль гео-/сетевой эмуляции по умолчанию (none/offline/slow-3g/fast-3g/geo-*); прогон может его переопределить.">
                   <textarea name="test_flags" rows={8} className="input font-mono text-xs" defaultValue={json(stand.test_flags)} placeholder={FLAGS_EXAMPLE} />
                 </Field>
               </div>

@@ -175,3 +175,45 @@ test("exec-профили: дефолт instant тождественен тек�
   assert.equal(getExecProfile("stable").retry.retry_on.includes("timeout"), true);
   assert.equal(EXEC_PROFILES[0]!.key, "instant", "instant — первый (дефолт формы)");
 });
+
+test("net-профили: дефолт none без эмуляции, резолв прогон>стенд, каталог валиден", async () => {
+  const { NET_PROFILES, getNetProfile, resolveNetProfile, hasEmulation, DEFAULT_NET_PROFILE } = await import("./netprofile.ts");
+
+  // Дефолт — без эмуляции, тождественен прежнему поведению контекста
+  const none = getNetProfile(null);
+  assert.equal(none.key, "none");
+  assert.equal(hasEmulation(none), false, "none ничего не эмулирует");
+  assert.equal(NET_PROFILES[0]!.key, "none", "none — первый (дефолт формы)");
+  assert.equal(DEFAULT_NET_PROFILE, "none");
+
+  // Неизвестный ключ падает в дефолт, а не бросает
+  assert.equal(getNetProfile("нет-такого").key, "none");
+
+  // Резолв: выбор прогона переопределяет дефолт стенда; иначе — стенд; иначе — none
+  assert.equal(resolveNetProfile("fast-3g", "slow-3g").key, "fast-3g", "прогон важнее стенда");
+  assert.equal(resolveNetProfile(null, "slow-3g").key, "slow-3g", "дефолт стенда при пустом прогоне");
+  assert.equal(resolveNetProfile(null, null).key, "none");
+
+  // Сетевой профиль: условия заданы и считаются эмуляцией
+  const slow = getNetProfile("slow-3g");
+  assert.ok(hasEmulation(slow));
+  assert.equal(slow.geo, null);
+  assert.ok((slow.network?.download ?? 0) > 0 && (slow.network?.latency ?? 0) > 0);
+
+  // offline — тоже эмуляция
+  assert.equal(hasEmulation(getNetProfile("offline")), true);
+  assert.equal(getNetProfile("offline").network?.offline, true);
+
+  // Гео-профиль: координаты в диапазоне, есть подпись региона, сети нет
+  for (const key of ["geo-moscow", "geo-berlin", "geo-newyork"]) {
+    const g = getNetProfile(key);
+    assert.ok(g.geo, `${key}: есть гео`);
+    assert.ok(Math.abs(g.geo!.latitude) <= 90 && Math.abs(g.geo!.longitude) <= 180, `${key}: валидные координаты`);
+    assert.ok(g.geo!.region && g.geo!.region.length > 0, `${key}: есть подпись региона`);
+    assert.equal(hasEmulation(g), true);
+  }
+
+  // Все ключи уникальны
+  const keys = NET_PROFILES.map((p) => p.key);
+  assert.equal(new Set(keys).size, keys.length, "ключи профилей уникальны");
+});
