@@ -1,0 +1,18 @@
+# Воркеры E2E Hub. Веб-панель живёт на Vercel, база — в Supabase.
+#   cp apps/worker/.env.example apps/worker/.env   # заполнить
+#   docker compose up -d --build
+#   docker compose up -d --scale worker=3          # больше воркеров
+services:
+  worker:
+    build:
+      context: .
+      dockerfile: apps/worker/Dockerfile
+    env_file: apps/worker/.env
+    restart: unless-stopped
+    init: true
+    ipc: host # Chrome стабильнее с общим /dev/shm
+    stop_grace_period: 10m # воркер дожидается текущих прогонов
+    deploy:
+      resources:
+        limits:
+          memory: 4g

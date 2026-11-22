@@ -1,0 +1,17 @@
+{
+  "name": "e2e-hub",
+  "private": true,
+  "packageManager": "pnpm@10.28.0",
+  "scripts": {
+    "dev": "pnpm --filter @e2e/web dev",
+    "dev:worker": "pnpm --filter @e2e/worker dev",
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "db:check": "node scripts/check-migrations.mjs"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "0.5.17",
+    "typescript": "5.9.3"
+  }
+}

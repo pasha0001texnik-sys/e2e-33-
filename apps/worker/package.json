@@ -1,0 +1,26 @@
+{
+  "name": "@e2e/worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch --env-file-if-exists=.env src/index.ts",
+    "start": "node dist/index.js",
+    "build": "tsup",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "node --import tsx --test src/**/*.test.ts"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "2.119.2",
+    "cron-parser": "5.10.6",
+    "@playwright/test": "1.65.1",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@e2e/shared": "workspace:*",
+    "@types/node": "22.19.1",
+    "tsup": "8.5.1",
+    "tsx": "4.23.15",
+    "typescript": "5.9.3"
+  }
+}
