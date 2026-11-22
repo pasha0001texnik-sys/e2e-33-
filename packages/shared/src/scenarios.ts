@@ -32,6 +32,13 @@ export const SCENARIO_CATALOG: ScenarioInfo[] = [
     dependsOn: ["onboarding.profile"],
     platforms: ["web"],
   },
+  {
+    key: "e2e.full-signup",
+    name: "Сквозной сценарий: регистрация → код → вход",
+    tags: ["e2e", "smoke", "auth"],
+    dependsOn: [],
+    platforms: ["web"],
+  },
 ];
 
 const BY_KEY = new Map(SCENARIO_CATALOG.map((s) => [s.key, s]));

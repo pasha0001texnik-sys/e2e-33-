@@ -2,9 +2,9 @@
 // Чтобы добавить сценарий: создайте объект Scenario и добавьте его в SCENARIOS.
 
 import { expect } from "@playwright/test";
-import { logIn, path, sel, signUp, userFromDependency, verifiedUser, verifyEmail } from "./flows.ts";
+import { logIn, path, sel, signUp, userFromDependency, verifiedUser, verifyByCodeProvider, verifyEmail } from "./flows.ts";
 import * as mobile from "./mobile.ts";
-import type { Scenario } from "./types.ts";
+import type { Scenario, StandFlags } from "./types.ts";
 
 export const SCENARIOS: Scenario[] = [
   {
@@ -119,6 +119,28 @@ export const SCENARIOS: Scenario[] = [
         await expect(ctx.page.locator(sel(ctx, "app.user_menu"))).toBeVisible({ timeout: 20000 });
         await expect(ctx.page.locator(sel(ctx, "onboarding.company"))).toHaveCount(0);
       });
+    },
+  },
+  {
+    // Сквозной сценарий: объединяет fixture_template (данные), exec_profile (тайминги)
+    // и net_profile (контекст) — применяются раннером — с подтверждением по коду из
+    // источника (ctx.codes) или по письму, и фиксацией результата в run_results.
+    key: "e2e.full-signup",
+    name: "Сквозной сценарий: регистрация → код → вход",
+    tags: ["e2e", "smoke", "auth"],
+    async run(ctx) {
+      const user = await ctx.fixtures.createUser();
+      const since = new Date(Date.now() - 5000);
+      await signUp(ctx, user);
+      // Код из HTTP-источника, если настроен на стенде; иначе — подтверждение по письму
+      const codeProvider = (ctx.stand.test_flags as StandFlags).code_provider;
+      if (codeProvider?.url) await verifyByCodeProvider(ctx, user);
+      else await verifyEmail(ctx, user, since);
+      await logIn(ctx, user.email, user.password);
+      await ctx.step("Проверить вход в продукт", async () => {
+        await expect(ctx.page.locator(sel(ctx, "app.user_menu"))).toBeVisible({ timeout: 20000 });
+      });
+      ctx.share("user", user.id);
     },
   },
 ];

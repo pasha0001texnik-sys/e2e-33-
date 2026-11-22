@@ -57,6 +57,13 @@ export default async function StandPage({
   const q = stand.quiet_hours;
   const json = (v: unknown) => (v && Object.keys(v as object).length ? JSON.stringify(v, null, 2) : "");
 
+  // code_provider редактируется отдельными полями, а не в сыром JSON флагов
+  const allFlags = { ...((stand.test_flags as Record<string, unknown>) ?? {}) };
+  const cp = (allFlags.code_provider ?? {}) as Record<string, unknown>;
+  const cpExtract = (cp.extract ?? {}) as Record<string, unknown>;
+  const str = (v: unknown) => (v == null ? "" : String(v));
+  delete allFlags.code_provider;
+
   return (
     <>
       <PageHeader
@@ -199,8 +206,60 @@ export default async function StandPage({
                 <Field label="Моки (JSON)" hint="Ответы-заглушки в браузере воркера">
                   <textarea name="mocks" rows={8} className="input font-mono text-xs" defaultValue={json(stand.mocks)} placeholder={MOCKS_EXAMPLE} />
                 </Field>
-                <Field label="Флаги (JSON)" hint="Пути, селекторы, политика паролей. net_profile — профиль гео-/сетевой эмуляции по умолчанию (none/offline/slow-3g/fast-3g/geo-*); прогон может его переопределить.">
-                  <textarea name="test_flags" rows={8} className="input font-mono text-xs" defaultValue={json(stand.test_flags)} placeholder={FLAGS_EXAMPLE} />
+                <Field label="Флаги (JSON)" hint="Пути, селекторы, политика паролей. net_profile — профиль гео-/сетевой эмуляции по умолчанию (none/offline/slow-3g/fast-3g/geo-*); прогон может его переопределить. Источник кодов редактируется отдельной карточкой ниже.">
+                  <textarea name="test_flags" rows={8} className="input font-mono text-xs" defaultValue={json(allFlags)} placeholder={FLAGS_EXAMPLE} />
+                </Field>
+              </div>
+            </Card>
+
+            <Card title="Источник кодов (code_provider)">
+              <p className="mb-3 text-xs text-ink-3">
+                HTTP-источник проверочного кода внутри тестового контура (перехватчик SMS, вебхук-синк). Хост обязан быть в allowlist
+                стенда и не в запрещённых. Оставьте URL пустым, чтобы отключить. Секрет токена храните в «Секретах стенда».
+              </p>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="sm:col-span-2">
+                  <Field label="URL источника" hint="В пределах allowlist стенда; пути ниже — относительные">
+                    <input name="cp_url" className="input font-mono" defaultValue={str(cp.url)} placeholder="https://sms.qa.example.test/" />
+                  </Field>
+                </div>
+                <Field label="Путь запроса" hint="{id} — идентификатор сессии/запроса">
+                  <input name="cp_path" className="input font-mono" defaultValue={str(cp.path)} placeholder="/codes/{id}" />
+                </Field>
+                <Field label="Метод">
+                  <select name="cp_method" className="input" defaultValue={str(cp.method) || "GET"}>
+                    <option value="GET">GET</option>
+                    <option value="POST">POST</option>
+                  </select>
+                </Field>
+                <Field label="Секрет токена (Bearer)" hint="Имя секрета в Vault, например codes_token">
+                  <input name="cp_token_secret" className="input font-mono" defaultValue={str(cp.token_secret)} placeholder="codes_token" />
+                </Field>
+                <div />
+                <Field label="Извлечение: поле JSON" hint="dot-путь, например data.code">
+                  <input name="cp_extract_field" className="input font-mono" defaultValue={str(cpExtract.field)} placeholder="data.code" />
+                </Field>
+                <Field label="Извлечение: regex" hint="группа 1 или всё совпадение; по умолчанию 4–8 цифр">
+                  <input name="cp_extract_regex" className="input font-mono" defaultValue={str(cpExtract.regex)} placeholder="\b(\d{4,8})\b" />
+                </Field>
+                <Field label="Таймаут ожидания, мс" hint="1000–600000">
+                  <input name="cp_timeout_ms" type="number" min={1000} max={600000} className="input" defaultValue={str(cp.timeout_ms)} placeholder="60000" />
+                </Field>
+                <Field label="Интервал опроса, мс" hint="250–60000">
+                  <input name="cp_poll_interval_ms" type="number" min={250} max={60000} className="input" defaultValue={str(cp.poll_interval_ms)} placeholder="2000" />
+                </Field>
+                <Field label="Таймаут запроса, мс" hint="1000–120000">
+                  <input name="cp_request_timeout_ms" type="number" min={1000} max={120000} className="input" defaultValue={str(cp.request_timeout_ms)} placeholder="10000" />
+                </Field>
+                <div />
+                <Field label="Release: путь" hint="Освобождение/отмена запроса; {id} подставляется">
+                  <input name="cp_release_path" className="input font-mono" defaultValue={str(cp.release_path)} placeholder="/codes/{id}" />
+                </Field>
+                <Field label="Release: метод">
+                  <select name="cp_release_method" className="input" defaultValue={str(cp.release_method) || "DELETE"}>
+                    <option value="DELETE">DELETE</option>
+                    <option value="POST">POST</option>
+                  </select>
                 </Field>
               </div>
             </Card>

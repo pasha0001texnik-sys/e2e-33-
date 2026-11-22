@@ -217,3 +217,57 @@ test("net-профили: дефолт none без эмуляции, резол�
   const keys = NET_PROFILES.map((p) => p.key);
   assert.equal(new Set(keys).size, keys.length, "ключи профилей уникальны");
 });
+
+test("requestHostStatus: allowlist, запрещённые и некорректные хосты", async () => {
+  const { requestHostStatus } = await import("./guard.ts");
+  assert.equal(requestHostStatus("https://codes.qa.test/x", ["codes.qa.test"]), "ok");
+  assert.equal(requestHostStatus("https://a.codes.qa.test/x", ["*.codes.qa.test"]), "ok");
+  assert.equal(requestHostStatus("https://evil.example.com/x", ["codes.qa.test"]), "blocked");
+  assert.equal(requestHostStatus("https://codes.qa.test/x", ["codes.qa.test"], ["codes.qa.test"]), "forbidden");
+  assert.equal(requestHostStatus("не-url", ["codes.qa.test"]), "invalid");
+});
+
+test("buildCodeProvider: валидный конфиг и нарушения границы", async () => {
+  const { buildCodeProvider } = await import("./codes.ts");
+  const allowed = ["codes.qa.test"];
+
+  // пусто → источник не задан, без ошибки
+  assert.deepEqual(buildCodeProvider({}, allowed), { config: null });
+
+  // валидный конфиг с полем, токеном, таймаутами и release
+  const ok = buildCodeProvider(
+    {
+      url: "https://codes.qa.test/",
+      path: "/codes/{id}",
+      method: "POST",
+      token_secret: "codes_token",
+      extract_field: "data.code",
+      timeout_ms: "30000",
+      poll_interval_ms: "1000",
+      release_path: "/codes/{id}",
+      release_method: "POST",
+    },
+    allowed,
+  );
+  assert.equal(ok.error, undefined);
+  assert.equal(ok.config?.url, "https://codes.qa.test/");
+  assert.equal(ok.config?.method, "POST");
+  assert.equal(ok.config?.token_secret, "codes_token");
+  assert.deepEqual(ok.config?.extract, { field: "data.code" });
+  assert.equal(ok.config?.timeout_ms, 30000);
+  assert.equal(ok.config?.release_method, "POST");
+
+  // хост вне allowlist
+  assert.match(buildCodeProvider({ url: "https://evil.example.com/" }, allowed).error ?? "", /вне allowlist/);
+  // запрещённый хост
+  assert.match(buildCodeProvider({ url: "https://codes.qa.test/" }, allowed, ["codes.qa.test"]).error ?? "", /запрещённых/);
+  // абсолютный путь (смена хоста) запрещён
+  assert.match(buildCodeProvider({ url: "https://codes.qa.test/", path: "https://evil.example.com/c" }, allowed).error ?? "", /относительным/);
+  // некорректный regex
+  assert.match(buildCodeProvider({ url: "https://codes.qa.test/", extract_regex: "(" }, allowed).error ?? "", /регулярное/);
+  // таймаут вне диапазона
+  assert.match(buildCodeProvider({ url: "https://codes.qa.test/", timeout_ms: "10" }, allowed).error ?? "", /timeout_ms/);
+  // метод по умолчанию GET не пишется, GET + без extra → минимальный конфиг
+  const min = buildCodeProvider({ url: "https://codes.qa.test/" }, allowed);
+  assert.deepEqual(min.config, { url: "https://codes.qa.test/" });
+});

@@ -33,6 +33,28 @@ export function hostAllowed(host: string, patterns: readonly string[]): boolean 
   return patterns.some((p) => hostMatches(host, p));
 }
 
+/**
+ * Статус запроса к url с учётом allowlist и запрещённых хостов стенда.
+ * Используется и браузерным guard, и валидацией источников (почта, коды).
+ */
+export function requestHostStatus(
+  url: string,
+  allowedHosts: readonly string[],
+  forbiddenPatterns: readonly string[] = [],
+): "ok" | "forbidden" | "blocked" | "invalid" {
+  if (url.startsWith("data:") || url.startsWith("blob:") || url.startsWith("about:")) return "ok";
+  let host = "";
+  try {
+    host = new URL(url).hostname.toLowerCase();
+  } catch {
+    return "invalid";
+  }
+  if (!host) return "invalid";
+  if (forbiddenPatterns.some((p) => hostMatches(host, p))) return "forbidden";
+  if (!hostAllowed(host, allowedHosts)) return "blocked";
+  return "ok";
+}
+
 /** Пересекаются ли два шаблона (используется для проверки запрещённых хостов). */
 export function patternsOverlap(a: string, b: string): boolean {
   const probe = (p: string) => (p.startsWith("*.") ? "x." + p.slice(2) : p);

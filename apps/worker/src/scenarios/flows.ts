@@ -99,6 +99,25 @@ export async function getVerificationCode(ctx: BaseContext, id: string, opts?: W
   return ctx.step("Получить код подтверждения из источника", () => ctx.codes.waitForCode(id, opts));
 }
 
+/**
+ * Подтверждение через код из HTTP-источника (ctx.codes): получить код по id,
+ * ввести и отправить. release вызывается в finally — и при успехе, и при падении
+ * шага (раннер дополнительно освобождает незакрытые запросы при завершении попытки).
+ */
+export async function verifyByCodeProvider(ctx: ScenarioContext, user: UserFixture, id = user.email) {
+  try {
+    const code = await getVerificationCode(ctx, id);
+    await ctx.step("Ввести код подтверждения", async () => {
+      await ctx.ui.fill(ctx.page.locator(sel(ctx, "verify.code")), code);
+      await ctx.ui.click(ctx.page.locator(sel(ctx, "verify.submit")));
+      await expect(ctx.page.locator(sel(ctx, "verify.done"))).toBeVisible({ timeout: 20000 });
+    });
+  } finally {
+    await ctx.codes.release(id).catch(() => {});
+  }
+  await ctx.fixtures.markVerified(user.id);
+}
+
 export async function logIn(ctx: ScenarioContext, email: string, password: string) {
   const { page } = ctx;
   await ctx.step("Открыть страницу входа", async () => {

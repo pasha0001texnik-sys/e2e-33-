@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
-import { assertStandSafe, GuardError, PLATFORMS, STAND_ENVS } from "@e2e/shared";
+import { assertStandSafe, buildCodeProvider, GuardError, PLATFORMS, STAND_ENVS } from "@e2e/shared";
 import type { ActionState } from "@/components/forms";
 import { requireRole } from "@/lib/auth";
 import { errText } from "@/lib/format";
@@ -58,6 +58,18 @@ const standSchema = z.object({
   mocks: jsonObj("Моки"),
   test_flags: jsonObj("Флаги"),
   is_active: z.boolean(),
+  // Источник кодов (code_provider): отдельные поля формы, собираются и валидируются ниже
+  cp_url: z.string().trim().default(""),
+  cp_path: z.string().trim().default(""),
+  cp_method: z.string().trim().default("GET"),
+  cp_token_secret: z.string().trim().default(""),
+  cp_extract_field: z.string().trim().default(""),
+  cp_extract_regex: z.string().trim().default(""),
+  cp_timeout_ms: z.string().trim().default(""),
+  cp_poll_interval_ms: z.string().trim().default(""),
+  cp_request_timeout_ms: z.string().trim().default(""),
+  cp_release_path: z.string().trim().default(""),
+  cp_release_method: z.string().trim().default("DELETE"),
 });
 
 export async function saveStand(_: ActionState, data: FormData): Promise<ActionState> {
@@ -73,7 +85,24 @@ export async function saveStand(_: ActionState, data: FormData): Promise<ActionS
       is_active: data.get("is_active") === "on",
     });
     if (!parsed.success) return { error: parsed.error.issues[0]?.message };
-    const { quiet_from, quiet_to, quiet_tz, quiet_days, ...rest } = parsed.data;
+    const {
+      quiet_from,
+      quiet_to,
+      quiet_tz,
+      quiet_days,
+      cp_url,
+      cp_path,
+      cp_method,
+      cp_token_secret,
+      cp_extract_field,
+      cp_extract_regex,
+      cp_timeout_ms,
+      cp_poll_interval_ms,
+      cp_request_timeout_ms,
+      cp_release_path,
+      cp_release_method,
+      ...rest
+    } = parsed.data;
     const stand = {
       ...rest,
       quiet_hours:
@@ -89,12 +118,38 @@ export async function saveStand(_: ActionState, data: FormData): Promise<ActionS
     }
 
     const { data: forbidden } = await supabase.from("forbidden_hosts").select("pattern");
+    const forbiddenPatterns = (forbidden ?? []).map((f) => f.pattern);
     try {
-      assertStandSafe(stand, (forbidden ?? []).map((f) => f.pattern));
+      assertStandSafe(stand, forbiddenPatterns);
     } catch (e) {
       if (e instanceof GuardError) return { error: e.message };
       throw e;
     }
+
+    // Источник кодов: собираем из полей формы, валидируем хост против allowlist/forbidden.
+    // Единственный источник code_provider — поля формы; из сырого JSON он убирается.
+    const cp = buildCodeProvider(
+      {
+        url: cp_url,
+        path: cp_path,
+        method: cp_method,
+        token_secret: cp_token_secret,
+        extract_field: cp_extract_field,
+        extract_regex: cp_extract_regex,
+        timeout_ms: cp_timeout_ms,
+        poll_interval_ms: cp_poll_interval_ms,
+        request_timeout_ms: cp_request_timeout_ms,
+        release_path: cp_release_path,
+        release_method: cp_release_method,
+      },
+      stand.allowed_hosts,
+      forbiddenPatterns,
+    );
+    if (cp.error) return { error: cp.error };
+    const flags: Record<string, unknown> = { ...(stand.test_flags as Record<string, unknown>) };
+    delete flags.code_provider;
+    if (cp.config) flags.code_provider = cp.config;
+    stand.test_flags = flags;
 
     if (id) {
       const { error } = await supabase.from("stands").update(stand).eq("id", id);
